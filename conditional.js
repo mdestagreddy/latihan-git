@@ -79,6 +79,5 @@ switch (warna) {
     }
     default: {
         console.log("Warna yang dipilih tidak ada");
-        break;
     }
 }
