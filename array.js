@@ -1,14 +1,14 @@
 var nilaiArray = [2, 5, 1, 3, 4];
-var perubahanArray = [...nilaiArray];
+var nilaiArraySebelumnya = [...nilaiArray];
 
 function hasilArray(nama, detail) {
-    if (JSON.stringify(nilaiArray) === JSON.stringify(perubahanArray) || detail != null) {
+    if (JSON.stringify(nilaiArray) === JSON.stringify(nilaiArraySebelumnya) || detail != null) {
         console.log(`[${nama}]${detail != null ? " " + detail : ""} ${JSON.stringify(nilaiArray)}`);
     } else {
-        console.log(`[${nama}] Sebelum: ${JSON.stringify(perubahanArray)}`);
+        console.log(`[${nama}] Sebelum: ${JSON.stringify(nilaiArraySebelumnya)}`);
         console.log(`[${nama}] Sesudah: ${JSON.stringify(nilaiArray)}`);
     }
-    perubahanArray = typeof nilaiArray == "object" ? [...nilaiArray] : nilaiArray;
+    nilaiArraySebelumnya = typeof nilaiArray == "object" ? [...nilaiArray] : nilaiArray;
 }
 
 console.log(nilaiArray[0]);
