@@ -18,7 +18,7 @@ const hitungLingkaran = (radius) => {
 
     const luas = (r) => pi * r * r;
     const keliling = (r) => 2 * pi * r;
-    
+
     console.log(`Luas: ${luas(radius)}`);
     console.log(`Keliling: ${keliling(radius)}`);
 }
@@ -32,3 +32,10 @@ function myFuncParameter(a, b = 5) {
 }
 console.log(myFuncParameter(2, 3));
 console.log(myFuncParameter(2));
+
+// Template Literal
+console.log("=======");
+console.log("Template Literal");
+let namaSaya = "Muhammad Desta Greddy Aulia Rahman";
+let hasilTemplate = `Halo, perkenalkan nama saya ${namaSaya}`;
+console.log(hasilTemplate);
