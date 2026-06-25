@@ -1,3 +1,5 @@
+console.clear();
+
 console.log("Halo semua");
 
 var nama = "John Doe";
