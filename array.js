@@ -1,3 +1,5 @@
+console.clear();
+
 var nilaiArray = [2, 5, 1, 3, 4];
 var nilaiArraySebelumnya = [...nilaiArray];
 
@@ -58,3 +60,19 @@ hasilArray("slice");
 // splice
 nilaiArray.splice(2, 0, "Heldi", "Dennis");
 hasilArray("splice");
+
+// looping array
+console.log("=====================\nLooping Array")
+console.log("// for");
+nilaiArray = ["Jeruk", "Mangga", "Apel"];
+for (var i = 0; i < nilaiArray.length; i++) {
+    console.log(nilaiArray[i]);
+}
+
+console.log("// while");
+nilaiArray = ["John", "Doe", "Jack"];
+var i = 0;
+while (i < nilaiArray.length) {
+    console.log(nilaiArray[i]);
+    i++;
+}

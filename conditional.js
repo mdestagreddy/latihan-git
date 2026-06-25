@@ -1,3 +1,5 @@
+console.clear();
+
 /**if (true) {
     console.log("Kode program dijalankan");
 }
