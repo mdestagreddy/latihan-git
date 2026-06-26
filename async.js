@@ -7,7 +7,7 @@ console.log("=================");
 /// Promise
 console.log("// Promise");
 
-// Contoh
+//// Contoh
 var isMomHappy = true;
 
 var willIGetNewPhone = new Promise(
@@ -37,7 +37,7 @@ function askMom() {
 }
 askMom();
 
-// Contoh dengan parameter
+//// Contoh dengan parameter
 function periksaDataPasien(nomorIdPasien) {
     var dataPasien = [
         {id: 1, nama: "John", jenisKelamin: "Laki-laki"},
@@ -60,4 +60,29 @@ periksaDataPasien(4).then(function(data) {
    console.log(data); 
 }).catch(function(err) {
     console.log(err);
-})
+});
+
+/// Async/await
+function doAsync() {
+    return new Promise(function(resolve, reject) {
+        var check = true;
+        if (check) {
+            resolve("berhasil");
+        } else {
+            reject("gagal");
+        }
+    })
+}
+
+async function hello() {
+    try {
+        var result = await doAsync();
+        console.log("// Async/await");
+        console.log(result);
+    } catch(err) {
+        console.log("// Async/await");
+        console.log(err);
+    }
+}
+
+hello();
