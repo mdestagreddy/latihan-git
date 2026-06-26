@@ -85,4 +85,14 @@ async function hello() {
     }
 }
 
+async function memeriksaPasien(nomorIdPasien) {
+    try {
+        var hasil = await periksaDataPasien(nomorIdPasien);
+        console.log(hasil);
+    } catch (error) {
+        console.log(error);
+    }
+}
+
 hello();
+memeriksaPasien(2);
