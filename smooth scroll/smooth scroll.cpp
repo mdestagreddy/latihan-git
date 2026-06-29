@@ -39,9 +39,9 @@ NOTIFYICONDATAW nid = { 0 };
 // Handle untuk Mutex (Pencegah Double Instance)
 HANDLE hMutex = NULL;
 
-const wchar_t REG_SUBKEY[] = L"Software\\iOS_SmoothScrollV6";
+const wchar_t REG_SUBKEY[] = L"Software\\SmoothScrollV6";
 const wchar_t REG_STARTUP_SUBKEY[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-const wchar_t APP_STARTUP_NAME[] = L"iOS_SmoothScrollV6";
+const wchar_t APP_STARTUP_NAME[] = L"SmoothScrollV6";
 
 BOOL IsStartupEnabled() {
     HKEY hKey;
@@ -209,7 +209,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
             nid.uCallbackMessage = WM_TRAYICON;
             nid.hIcon = LoadIconW(GetModuleHandle(NULL), MAKEINTRESOURCEW(IDI_MYICON));
-            lstrcpyW(nid.szTip, L"iOS Smooth Scroll Control");
+            lstrcpyW(nid.szTip, L"Smooth Scroll Control");
             
             Shell_NotifyIconW(NIM_ADD, &nid);
             break;
@@ -268,7 +268,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     // 1. KUNCI UTAMA: Cek Single Instance menggunakan Mutex Named kustom
-    hMutex = CreateMutexW(NULL, TRUE, L"Global\\iOS_SmoothScrollV6_UniqueMutexName");
+    hMutex = CreateMutexW(NULL, TRUE, L"Global\\SmoothScrollV6_UniqueMutexName");
     if (hMutex == NULL || GetLastError() == ERROR_ALREADY_EXISTS) {
         if (hMutex) CloseHandle(hMutex);
         return 0; // Instance sudah ada, langsung keluar/terminate silent
@@ -297,7 +297,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     RegisterClassA(&wc);
 
-    HWND hwnd = CreateWindowExA(0, CLASS_NAME, "iOS Smooth Scroll Control", 
+    HWND hwnd = CreateWindowExA(0, CLASS_NAME, "Smooth Scroll Control", 
                                 WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, 
                                 CW_USEDEFAULT, CW_USEDEFAULT, 310, 300, 
                                 NULL, NULL, hInstance, NULL);
