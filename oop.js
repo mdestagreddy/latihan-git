@@ -102,31 +102,30 @@ console.log(Car5.hello());
 /// Inheritance
 console.log("// Inheritance");
 
-class Animal {
-  constructor(name) {
-    this.name = name;
-  }
+class Person {
+    constructor(nama) {
+        this.nama = nama;
+        this.mapel = "";
+    }
 
-  eat() {
-    return `${this.name} is eating.`;
-  }
+    berjalan() {
+        return "Prok Prok Prok";
+    }
 }
 
-class Dog extends Animal {
-  constructor(name, breed) {
-    super(name); 
-    this.breed = breed;
-  }
+class School extends Person {
+    constructor(nama) {
+        super(nama);
+        this.school = "";
+    }
 
-  eat() {
-    return `${this.name} the ${this.breed} gobbles up food.`;
-  }
-
-  bark() {
-    return "Woof! Woof!";
-  }
+    berjalan() {
+        return "Prak, Prak, Prak";
+    }
 }
 
-var myPet = new Dog("Max", "Labrador");
-console.log(myPet.eat()); 
-console.log(myPet.bark());
+var guru = new School("Pak Budi");
+guru.mapel = "Matematika";
+guru.school = "SMA Negeri 1";
+console.log(guru);
+console.log(guru.berjalan());
