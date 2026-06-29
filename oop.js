@@ -41,6 +41,7 @@ console.log(innovam);
 /// Method
 console.log("// Method");
 
+//// Tanpa Parameter
 class Car2 {
     constructor(brand) {
         this.carname = brand;
@@ -52,6 +53,7 @@ class Car2 {
 var mycar = new Car2("Ford");
 console.log(mycar.present());
 
+//// Dengan Parameter
 class Car3 {
     constructor(brand) {
         this.carname = brand;
@@ -125,6 +127,6 @@ class Dog extends Animal {
   }
 }
 
-const myPet = new Dog("Max", "Labrador");
+var myPet = new Dog("Max", "Labrador");
 console.log(myPet.eat()); 
 console.log(myPet.bark());
