@@ -1,0 +1,4 @@
+#include "resource.h"
+
+IDI_MYICON ICON "appicon.ico"
+1 24 "app.manifest"
