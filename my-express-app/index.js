@@ -71,16 +71,16 @@ function getObjectMoviesByQuery(query, targetQuery) {
 }
 
 const getJSONMoviesAPI = (req, res) => {
-    let objectMovies = getObjectMoviesByQuery(req.query, {title: "originalTitle", year: "startYear"})
+    let objectMovies = getObjectMoviesByQuery(Object.keys(req.params).length != 0 ? req.params : req.query, {title: "originalTitle", year: "startYear"})
     res.json(objectMovies.result)
 }
 
 const getMovies = async (req, res) => {
     let result = "";
-    const queryString = new URLSearchParams(req.query).toString();
+    const queryString = new URLSearchParams(Object.keys(req.params).length != 0 ? req.params : req.query).toString();
     
     try {
-        let response = await fetch(`${BASE_URL}/object_movies?${queryString}`);
+        let response = await fetch(`${BASE_URL}/movies_api?${queryString}`);
         let json = await response.json();
 
         if (json.items) {
@@ -104,7 +104,9 @@ app.get('/', (req, res) => {
 })
 
 app.get('/movies', getMovies)
+app.get('/movies/:year', getMovies)
 app.get('/movies_api', getJSONMoviesAPI)
+app.get('/movies_api/:year', getJSONMoviesAPI)
 
 async function startServer() {
     await getJSONMovies();
