@@ -70,7 +70,7 @@ function getObjectMoviesByQuery(query, targetQuery) {
     return { result: { items: filtered, success: true }, queryDetected };
 }
 
-const getObjectMovies = (req, res) => {
+const getJSONMoviesAPI = (req, res) => {
     let objectMovies = getObjectMoviesByQuery(req.query, {title: "originalTitle", year: "startYear"})
     res.json(objectMovies.result)
 }
@@ -100,11 +100,11 @@ const getMovies = async (req, res) => {
 app.get('/', (req, res) => {
     res.send(`Homepage by mdestagreddy<br><br>
         <form action="/movies">Search Movies: <input name="title" type="search" /><input type="submit" value="Search" /></form>
-        <form action="/object_movies">Search Object Movies: <input name="title" type="search" /><input type="submit" value="Search" /></form>`)
+        <form action="/movies_api">Search Movies (JSON): <input name="title" type="search" /><input type="submit" value="Search" /></form>`)
 })
 
 app.get('/movies', getMovies)
-app.get('/object_movies', getObjectMovies)
+app.get('/movies_api', getJSONMoviesAPI)
 
 async function startServer() {
     await getJSONMovies();
