@@ -5,6 +5,19 @@ const port = 3000
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || `http://localhost:${port}`;
 
 let movies = null;
+let tokenAPI = null;
+let tokenTimeout = null;
+
+const updateToken = () => {
+    let result = "";
+    let chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+    for (let i = 0; i < 16; i++) {
+        result += chars.charAt(Math.round(Math.random() * chars.length));
+    }
+
+    tokenAPI = result;
+}
 
 async function getJSONMovies() {
     try {
@@ -73,7 +86,7 @@ function getObjectMoviesByQuery(query, targetQuery) {
 }
 
 const getMoviesAPI = (req, res) => {
-    let objectMovies = getObjectMoviesByQuery(Object.keys(req.params).length != 0 ? req.params : req.query, {title: "originalTitle", year: "startYear"})
+    let objectMovies = getObjectMoviesByQuery(Object.keys(req.params).length != 0 ? req.params : req.query, {keyword: "originalTitle", year: "startYear"})
     res.status(objectMovies.result.code).json(objectMovies.result)
 }
 
@@ -82,7 +95,7 @@ const getMovies = async (req, res) => {
     const queryString = new URLSearchParams(Object.keys(req.params).length != 0 ? req.params : req.query).toString();
     
     try {
-        let response = await fetch(`${BASE_URL}/movies_api?token=admin&${queryString}`);
+        let response = await fetch(`${BASE_URL}/api/movies?token=${tokenAPI}&${queryString}`);
         let json = await response.json();
 
         if (json.items) {
@@ -100,21 +113,19 @@ const getMovies = async (req, res) => {
     }
 }
 
-app.get('/', (req, res) => {
-    res.send(`Homepage by mdestagreddy<br><br>
-        <form action="/movies">Search Movies: <input name="title" type="search" /><input type="submit" value="Search" /></form>
-        <form action="/movies_api">Search Movies (JSON): <input name="title" type="search" /><input type="submit" value="Search" /><input type="hidden" name="token" value="admin" /></form>`)
-})
-
 const timingMiddleware = (req, res, next) => {
     const start = process.hrtime();
 
     res.on('finish', () => {
         const duration = process.hrtime(start);
         const durationInMs = (duration[0] * 1000 + duration[1] / 1e6).toFixed(2);
-
         console.log(`[${req.method}] ${req.originalUrl} - ${res.statusCode} (${durationInMs} ms)`);
     });
+
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
 
     next();
 }
@@ -122,14 +133,18 @@ const timingMiddleware = (req, res, next) => {
 const loggerMiddleware = (req, res, next) => {
     console.log(`Method: ${req.method}`)
     console.log(`URL: ${req.url}`)
+    console.log("Time: ", new Date())
     next()
 }
 
 const tokenMiddleware = (req, res, next) => {
     let { token } = req.query;
 
-    if (token == "admin") {
+    if (token == tokenAPI) {
         next()
+        if (!tokenTimeout) {
+            tokenTimeout = setTimeout(() => { updateToken(); tokenTimeout = null; }, 30000);
+        }
     } else {
         res.status(401).json({
             error: "Token tidak valid",
@@ -141,9 +156,16 @@ const tokenMiddleware = (req, res, next) => {
 
 app.use(timingMiddleware);
 app.get('/movies', getMovies)
-app.get('/movies/:year', getMovies)
-app.get('/movies_api', loggerMiddleware, tokenMiddleware, getMoviesAPI)
-app.get('/movies_api/:year', loggerMiddleware, tokenMiddleware, getMoviesAPI)
+app.get('/movies/:keyword', getMovies)
+app.get('/api/movies', loggerMiddleware, tokenMiddleware, getMoviesAPI)
+app.get('/api/movies/:keyword', loggerMiddleware, tokenMiddleware, getMoviesAPI)
+
+app.get('/', timingMiddleware, (req, res) => {  
+    updateToken();
+    res.send(`Homepage by mdestagreddy<br><br>
+        <form action="/movies">Search Movies: <input name="keyword" type="search" /><input type="submit" value="Search" /></form>
+        <form action="/api/movies">Search Movies (JSON): <input name="keyword" type="search" /><input type="submit" value="Search" /><input type="hidden" name="token" value="${tokenAPI}" /></form>`)
+})
 
 async function startServer() {
     await getJSONMovies();
