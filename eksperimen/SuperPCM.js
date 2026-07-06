@@ -6,7 +6,7 @@
  * Features:
  *  - PCM 8/16/24/32-bit signed integer
  *  - PCM 32-bit float (WAV AudioFormat 3)
- *  - ADPCM 4-bit (IMA ADPCM) & 3-bit
+ *  - ADPCM 4-bit (IMA ADPCM) & 3-bit, include Joint-Stereo
  *  - AudioBuffer <-> PCM
  *  - PCM <-> WAV/MP3/FLAC/EAC (Blob)
  *  - WAV <-> AudioBuffer/PCM
@@ -15,6 +15,7 @@
  *  - Audio Stream from <audio> or <video>
  *  - Recorder
  *  - Gapless
+ *  - Amplitudo
  *  - Resample
  *  - Cut
  *  - Merge Audio Source
@@ -22,6 +23,7 @@
  *  - Null Test
  *  - Audio Watermark
  * 
+ * Supports asynchronous and synchronous processing on some features
  * No ES Module, no TypeScript. Exposes a global: window.SuperPCM (or global.SuperPCM).
  */
 
@@ -50,7 +52,9 @@
   SuperPCM.timeUpdateMs = 1000 / 30;
 
   // Interpolation mode amplitudo (Smooth the amplitudo to reduce digital distortion)
-  // Supports step/zoh, linear, cosine, quadratic, cubic, hermite, sinc/lanczos, bspline, akima, and lanczos3
+  // Supports step/zoh, linear, cosine, quadratic, cubic, hermite,
+  // sinc/lanczos, bspline, akima, lanczos3, kaiser,
+  // catmullrom, mitchell, blackman, and gaussian
   SuperPCM.interpolationMode = "cubic";
 
   // Fade play/pause miliseconds
@@ -58,7 +62,189 @@
 
   // Streaming running on Background (default: false)
   SuperPCM.runOnBackground = false;
-
+  
+  // Asynchronous processing frame size
+  SuperPCM.asyncFrameSize = 65536;
+  
+  /** Asynchronous Processing **/
+  SuperPCM.AsyncProcessing = function (options) {
+    options = options || {};
+  
+    var _this = this;
+    var timer = null;
+  
+    this.async = options.async !== false;
+    this.stepSize = options.stepSize || options.frameSize || SuperPCM.asyncFrameSize || 65536;
+  
+    this.vars = {};
+  
+    this.running = false;
+    this.paused = false;
+    this.stopped = false;
+    this.done = false;
+  
+    this.initial = function (vars) {
+      vars = vars || {};
+  
+      for (var k in vars) {
+        if (Object.prototype.hasOwnProperty.call(vars, k)) {
+          this.vars[k] = vars[k];
+        }
+      }
+  
+      return this;
+    };
+  
+    this.conditional = options.conditional || function (vars) {
+      return vars.index < vars.total;
+    };
+  
+    this.logical = options.logical || function (vars) {
+      vars.index++;
+    };
+  
+    this.fnProcess = options.process || function () {};
+  
+    this.stop = function () {
+      this.running = false;
+      this.paused = false;
+      this.stopped = true;
+  
+      if (timer != null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+  
+      return this;
+    };
+  
+    this.pause = function () {
+      if (this.running && !this.done) {
+        this.paused = true;
+      }
+  
+      return this;
+    };
+  
+    this.resume = function (callback) {
+      if (!this.done && !this.stopped) {
+        this.paused = false;
+        this.running = true;
+        this.processing(callback);
+      }
+  
+      return this;
+    };
+  
+    this.reset = function () {
+      this.stop();
+  
+      this.running = false;
+      this.paused = false;
+      this.stopped = false;
+      this.done = false;
+  
+      return this;
+    };
+  
+    this.status = function () {
+      return {
+        running: this.running,
+        paused: this.paused,
+        stopped: this.stopped,
+        done: this.done,
+        vars: this.vars
+      };
+    };
+  
+    this.processing = function (callback) {
+      if (this.done) {
+        if (typeof callback === "function") {
+          callback({
+            done: true,
+            stopped: false,
+            paused: false,
+            vars: this.vars
+          });
+        }
+        return this;
+      }
+  
+      if (this.stopped) {
+        if (typeof callback === "function") {
+          callback({
+            done: true,
+            stopped: true,
+            paused: false,
+            vars: this.vars
+          });
+        }
+        return this;
+      }
+  
+      if (this.paused) {
+        if (typeof callback === "function") {
+          callback({
+            done: false,
+            stopped: false,
+            paused: true,
+            vars: this.vars
+          });
+        }
+        return this;
+      }
+  
+      this.running = true;
+  
+      var count = 0;
+  
+      while (!this.stopped && !this.paused && this.conditional(this.vars)) {
+        this.fnProcess(this.vars);
+        this.logical(this.vars);
+  
+        count++;
+  
+        if (this.async && count >= this.stepSize) {
+          if (typeof callback === "function") {
+            callback({
+              done: false,
+              stopped: false,
+              paused: false,
+              vars: this.vars
+            });
+          }
+  
+          timer = setTimeout(function () {
+            timer = null;
+            _this.processing(callback);
+          }, 0);
+  
+          return this;
+        }
+      }
+  
+      if (this.stopped) {
+        this.running = false;
+      } else if (this.paused) {
+        this.running = true;
+      } else {
+        this.running = false;
+        this.done = true;
+      }
+  
+      if (typeof callback === "function") {
+        callback({
+          done: this.done,
+          stopped: this.stopped,
+          paused: this.paused,
+          vars: this.vars
+        });
+      }
+  
+      return this;
+    };
+  };
+  
   /** ADPCM (Adaptive Differental Pulse-Code Modulation)  **/
   // IMA Table
   var IMA_ADPCM_INDEX_TABLE = [
@@ -2820,8 +3006,7 @@
 
   /**
   * Get amplitudo
-  * Interpolation Mode: Linear & Cubic
-  * Smooth (default: true)
+  * Supports many interpolation amplitudo
   */
   function fetchRawSample(pcm, off, channels, channel, bytesPerSample, bitDepth, float, dv, ratio) {
     var offFloor = Math.floor(off);
@@ -2842,150 +3027,313 @@
 
     return 0;
   }
-    function getAmplitudo(pcm, offset, channels, channel, bitDepth, float, interpolationMode, dv, ratio) {
+  
+  function besselI0(x) {
+    var sum = 1;
+    var y = x * x / 4;
+    var t = 1;
+  
+    for (var i = 1; i <= 12; i++) {
+      t *= y / (i * i);
+      sum += t;
+    }
+  
+    return sum;
+  }
+  
+  function kaiserWindow(x, radius, beta) {
+    if (Math.abs(x) > radius) return 0;
+  
+    var r = x / radius;
+    return besselI0(beta * Math.sqrt(1 - r * r)) / besselI0(beta);
+  }
+  
+  function sincKernel(x) {
+    if (x === 0) return 1;
+    var px = Math.PI * x;
+    return Math.sin(px) / px;
+  }
+  
+  SuperPCM.getAmplitudo = function(pcm, offset, channels, channel, bitDepth, float, interpolationMode, dv, ratio) {
     var bytesPerSample = getBytesPerSample(bitDepth, float);
     var totalFrames = Math.floor(pcm.length / (bytesPerSample * channels));
     interpolationMode = interpolationMode || SuperPCM.interpolationMode;
     ratio = Math.max(1, ratio ?? 1);
-
+  
     if (!dv && (float || bitDepth === SuperPCM.BIT_DEPTH_16 || bitDepth === SuperPCM.BIT_DEPTH_32)) {
       dv = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
     }
-
+  
     var rOffset = Math.floor(offset / ratio) * ratio;
     var t = (offset - rOffset) / ratio;
-
+  
     // ==================================================================
-    // BRANCH 1: STANDARD 4-POINT INTERPOLATORS (OPTIMIZED FETCH)
+    // BRANCH 1: STANDARD 4-POINT INTERPOLATORS
     // ==================================================================
-    if (interpolationMode === "cubic" || interpolationMode === "hermite" || interpolationMode === "bspline") {
-      var s_1 = fetchRawSample(pcm, rOffset - ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio),
-          s0  = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio),
-          s1  = fetchRawSample(pcm, rOffset + ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio),
-          s2  = fetchRawSample(pcm, rOffset + ratio * 2, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-
-      if (interpolationMode === "cubic") {
-        var k0 = -0.5 * s_1 + 1.5 * s0 - 1.5 * s1 + 0.5 * s2,
-            k1 = s_1 - 2.5 * s0 + 2.0 * s1 - 0.5 * s2,
-            k2 = -0.5 * s_1 + 0.5 * s1,
-            k3 = s0;
-        return ((k0 * t + k1) * t + k2) * t + k3;
-      } 
-      else if (interpolationMode === "hermite") {
-        var h0 = -0.5 * s_1 + 1.5 * s0 - 1.5 * s1 + 0.5 * s2,
-            h1 = s_1 - 2.5 * s0 + 2.0 * s1 - 0.5 * s2,
-            h2 = -0.5 * s_1 + 0.5 * s1,
-            h3 = s0;
-        return ((h0 * t + h1) * t + h2) * t + h3;
-      } 
-      else if (interpolationMode === "bspline") {
-        var b0 = (1 - t) * (1 - t) * (1 - t) / 6,
-            b1 = (3 * t * t * t - 6 * t * t + 4) / 6,
-            b2 = (-3 * t * t * t + 3 * t * t + 3 * t + 1) / 6,
-            b3 = t * t * t / 6;
+    if (
+      interpolationMode === "cubic" ||
+      interpolationMode === "hermite" ||
+      interpolationMode === "bspline" ||
+      interpolationMode === "catmullrom" ||
+      interpolationMode === "mitchell"
+    ) {
+      var s_1 = fetchRawSample(pcm, rOffset - ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var s0  = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var s1  = fetchRawSample(pcm, rOffset + ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var s2  = fetchRawSample(pcm, rOffset + ratio * 2, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+  
+      if (interpolationMode === "bspline") {
+        var b0 = (1 - t) * (1 - t) * (1 - t) / 6;
+        var b1 = (3 * t * t * t - 6 * t * t + 4) / 6;
+        var b2 = (-3 * t * t * t + 3 * t * t + 3 * t + 1) / 6;
+        var b3 = t * t * t / 6;
         return b0 * s_1 + b1 * s0 + b2 * s1 + b3 * s2;
       }
-    } 
-
+  
+      if (interpolationMode === "mitchell") {
+        var B = 1 / 3;
+        var C = 1 / 3;
+  
+        function mitchellWeight(x) {
+          x = Math.abs(x);
+          var x2 = x * x;
+          var x3 = x2 * x;
+  
+          if (x < 1) {
+            return ((12 - 9 * B - 6 * C) * x3 +
+                    (-18 + 12 * B + 6 * C) * x2 +
+                    (6 - 2 * B)) / 6;
+          }
+  
+          if (x < 2) {
+            return ((-B - 6 * C) * x3 +
+                    (6 * B + 30 * C) * x2 +
+                    (-12 * B - 48 * C) * x +
+                    (8 * B + 24 * C)) / 6;
+          }
+  
+          return 0;
+        }
+  
+        var mw0 = mitchellWeight(t + 1);
+        var mw1 = mitchellWeight(t);
+        var mw2 = mitchellWeight(1 - t);
+        var mw3 = mitchellWeight(2 - t);
+        var mwSum = mw0 + mw1 + mw2 + mw3;
+  
+        return mwSum !== 0
+          ? (s_1 * mw0 + s0 * mw1 + s1 * mw2 + s2 * mw3) / mwSum
+          : s0;
+      }
+  
+      // cubic, hermite, catmullrom
+      var k0 = -0.5 * s_1 + 1.5 * s0 - 1.5 * s1 + 0.5 * s2;
+      var k1 = s_1 - 2.5 * s0 + 2.0 * s1 - 0.5 * s2;
+      var k2 = -0.5 * s_1 + 0.5 * s1;
+      var k3 = s0;
+  
+      return ((k0 * t + k1) * t + k2) * t + k3;
+    }
+  
     // ==================================================================
-    // BRANCH 2: AKIMA SUB-SPLINE (DEDICATED 6-POINT LIGHT FOR TRANSIENTS)
+    // BRANCH 2: AKIMA SUB-SPLINE
     // ==================================================================
     else if (interpolationMode === "akima") {
-      var s_2 = fetchRawSample(pcm, rOffset - ratio * 2, channels, channel, bytesPerSample, bitDepth, float, dv, ratio),
-          s_1 = fetchRawSample(pcm, rOffset - ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio),
-          s0  = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio),
-          s1  = fetchRawSample(pcm, rOffset + ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio),
-          s2  = fetchRawSample(pcm, rOffset + ratio * 2, channels, channel, bytesPerSample, bitDepth, float, dv, ratio),
-          s3  = fetchRawSample(pcm, rOffset + ratio * 3, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-
-      // Calculate localized slopes between adjacent points
-      var m1 = s_1 - s_2, m2 = s0 - s_1, m3 = s1 - s0, m4 = s2 - s1, m5 = s3 - s2;
-      
-      var w1 = Math.abs(m4 - m3), w2 = Math.abs(m2 - m1);
+      var a_2 = fetchRawSample(pcm, rOffset - ratio * 2, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var a_1 = fetchRawSample(pcm, rOffset - ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var a0  = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var a1  = fetchRawSample(pcm, rOffset + ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var a2  = fetchRawSample(pcm, rOffset + ratio * 2, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var a3  = fetchRawSample(pcm, rOffset + ratio * 3, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+  
+      var m1 = a_1 - a_2;
+      var m2 = a0 - a_1;
+      var m3 = a1 - a0;
+      var m4 = a2 - a1;
+      var m5 = a3 - a2;
+  
+      var w1 = Math.abs(m4 - m3);
+      var w2 = Math.abs(m2 - m1);
       var t1 = (w1 + w2 > 0) ? (w1 * m2 + w2 * m3) / (w1 + w2) : 0.5 * (m2 + m3);
-      
-      var w3 = Math.abs(m5 - m4), w4 = Math.abs(m3 - m2);
+  
+      var w3 = Math.abs(m5 - m4);
+      var w4 = Math.abs(m3 - m2);
       var t2 = (w3 + w4 > 0) ? (w3 * m3 + w4 * m4) / (w3 + w4) : 0.5 * (m3 + m4);
-      
-      var a0 = s0,
-          a1 = t1,
-          a2 = 3 * m3 - 2 * t1 - t2,
-          a3 = t1 + t2 - 2 * m3;
-      return ((a3 * t + a2) * t + a1) * t + a0;
+  
+      var c0 = a0;
+      var c1 = t1;
+      var c2 = 3 * m3 - 2 * t1 - t2;
+      var c3 = t1 + t2 - 2 * m3;
+  
+      return ((c3 * t + c2) * t + c1) * t + c0;
     }
-
+  
     // ==================================================================
-    // BRANCH 3: LANCZOS-3 SINC FILTER (DEDICATED 6-POINT AUDIOPHILE WINDOW)
+    // BRANCH 3: LANCZOS-3 SINC FILTER
     // ==================================================================
     else if (interpolationMode === "lanczos3") {
       var sum = 0, weightSum = 0;
-      
-      // Dynamic inline crawling loop across 6 continuous sampling scales
+  
       for (var g = -2; g <= 3; g++) {
         var samplePos = rOffset + g * ratio;
         if (samplePos < 0) samplePos = 0;
         if (samplePos >= totalFrames * ratio) samplePos = (totalFrames - 1) * ratio;
-        
+  
         var sampleVal = fetchRawSample(pcm, samplePos, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
         var x = t - g;
         var weight = 0;
-        
+  
         if (x === 0) {
           weight = 1;
         } else if (x > -3 && x < 3) {
           var piX = Math.PI * x;
           weight = (Math.sin(piX) / piX) * (Math.sin(piX / 3) / (piX / 3));
         }
+  
         sum += sampleVal * weight;
         weightSum += weight;
       }
-      return weightSum > 0 ? sum / weightSum : 0;
+  
+      return weightSum !== 0 ? sum / weightSum : 0;
     }
-
+  
     // ==================================================================
-    // BRANCH 4: LIGHTWEIGHT LOW-ORDER KERNELS (2-POINT & 3-POINT)
+    // BRANCH 4: KAISER WINDOWED SINC FILTER
     // ==================================================================
-    else if (interpolationMode === "quadratic") {
-      var s_1 = fetchRawSample(pcm, rOffset - ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio),
-          s0  = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio),
-          s1  = fetchRawSample(pcm, rOffset + ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-      var qA = 0.5 * (s1 + s_1) - s0, qB = 0.5 * (s1 - s_1);
-      return (qA * t + qB) * t + s0;
-    }
-    else if (interpolationMode === "cosine") {
-      var s0 = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-      var s1 = fetchRawSample(pcm, rOffset + ratio < totalFrames * ratio ? rOffset + ratio : rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-      var mu2 = (1 - Math.cos(t * Math.PI)) * 0.5;
-      return s0 * (1 - mu2) + s1 * mu2;
-    } 
-    else if (interpolationMode === "linear") {
-      var s0 = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio),
-          s1 = fetchRawSample(pcm, rOffset < totalFrames ? rOffset + ratio: rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-      return s0 + (s1 - s0) * t;
-    } 
-    else if (interpolationMode === "sinc" || interpolationMode === "lanczos") {
-      var sum = 0, weightSum = 0;
-      for (var g = -1; g <= 2; g++) {
+    else if (interpolationMode === "kaiser") {
+      var sum = 0;
+      var weightSum = 0;
+      var radius = 6;
+      var beta = 8.6;
+  
+      for (var g = -radius + 1; g <= radius; g++) {
         var samplePos = rOffset + g * ratio;
         if (samplePos < 0) samplePos = 0;
         if (samplePos >= totalFrames * ratio) samplePos = (totalFrames - 1) * ratio;
+  
         var sampleVal = fetchRawSample(pcm, samplePos, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-        var x = t - g; var weight = 0;
-        if (x === 0) { weight = 1; }
-        else if (x > -2 && x < 2) {
-          var piX = Math.PI * x;
-          weight = (Math.sin(piX) / piX) * (Math.sin(piX * 0.5) / (piX * 0.5));
-        }
-        sum += sampleVal * weight; weightSum += weight;
+        var x = t - g;
+        var weight = sincKernel(x) * kaiserWindow(x, radius, beta);
+  
+        sum += sampleVal * weight;
+        weightSum += weight;
       }
-      return weightSum > 0 ? sum / weightSum : 0;
+  
+      return weightSum !== 0 ? sum / weightSum : 0;
     }
-    else if (interpolationMode === "step" || interpolationMode === "zoh") {
-      return fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv);
+  
+    // ==================================================================
+    // BRANCH 5: BLACKMAN WINDOWED SINC FILTER
+    // ==================================================================
+    else if (interpolationMode === "blackman") {
+      var sum = 0;
+      var weightSum = 0;
+      var radius = 6;
+  
+      for (var g = -radius + 1; g <= radius; g++) {
+        var samplePos = rOffset + g * ratio;
+        if (samplePos < 0) samplePos = 0;
+        if (samplePos >= totalFrames * ratio) samplePos = (totalFrames - 1) * ratio;
+  
+        var sampleVal = fetchRawSample(pcm, samplePos, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+        var x = t - g;
+        var ax = Math.abs(x);
+  
+        var weight = 0;
+        if (ax <= radius) {
+          var n = (x + radius) / (2 * radius);
+          var blackman = 0.42 - 0.5 * Math.cos(2 * Math.PI * n) + 0.08 * Math.cos(4 * Math.PI * n);
+          weight = sincKernel(x) * blackman;
+        }
+  
+        sum += sampleVal * weight;
+        weightSum += weight;
+      }
+  
+      return weightSum !== 0 ? sum / weightSum : 0;
     }
-
-    // DEFAULT FALLBACK MODE: NEAREST NEIGHBOR
-    return fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv);
+  
+    // ==================================================================
+    // BRANCH 6: GAUSSIAN FILTER
+    // ==================================================================
+    else if (interpolationMode === "gaussian") {
+      var sum = 0;
+      var weightSum = 0;
+      var radius = 4;
+      var sigma = 1.2;
+  
+      for (var g = -radius; g <= radius; g++) {
+        var samplePos = rOffset + g * ratio;
+        if (samplePos < 0) samplePos = 0;
+        if (samplePos >= totalFrames * ratio) samplePos = (totalFrames - 1) * ratio;
+  
+        var sampleVal = fetchRawSample(pcm, samplePos, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+        var x = t - g;
+        var weight = Math.exp(-(x * x) / (2 * sigma * sigma));
+  
+        sum += sampleVal * weight;
+        weightSum += weight;
+      }
+  
+      return weightSum !== 0 ? sum / weightSum : 0;
+    }
+  
+    // ==================================================================
+    // BRANCH 7: LIGHTWEIGHT LOW-ORDER KERNELS
+    // ==================================================================
+    else if (interpolationMode === "quadratic") {
+      var q_1 = fetchRawSample(pcm, rOffset - ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var q0  = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var q1  = fetchRawSample(pcm, rOffset + ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+  
+      var qA = 0.5 * (q1 + q_1) - q0;
+      var qB = 0.5 * (q1 - q_1);
+  
+      return (qA * t + qB) * t + q0;
+    }
+  
+    else if (interpolationMode === "cosine") {
+      var c0 = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var c1 = fetchRawSample(pcm, rOffset + ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var mu2 = (1 - Math.cos(t * Math.PI)) * 0.5;
+  
+      return c0 * (1 - mu2) + c1 * mu2;
+    }
+  
+    else if (interpolationMode === "linear") {
+      var l0 = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var l1 = fetchRawSample(pcm, rOffset + ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+  
+      return l0 + (l1 - l0) * t;
+    }
+  
+    else if (interpolationMode === "sinc" || interpolationMode === "lanczos") {
+      var sum = 0;
+      var weightSum = 0;
+      var radius = 4;
+  
+      for (var g = -radius + 1; g <= radius; g++) {
+        var samplePos = rOffset + g * ratio;
+        if (samplePos < 0) samplePos = 0;
+        if (samplePos >= totalFrames * ratio) samplePos = (totalFrames - 1) * ratio;
+  
+        var sampleVal = fetchRawSample(pcm, samplePos, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+        var x = t - g;
+        var weight = sincKernel(x);
+  
+        if (interpolationMode === "lanczos") {
+          weight *= sincKernel(x / radius);
+        }
+  
+        sum += sampleVal * weight;
+        weightSum += weight;
+      }
+  
+      return weightSum !== 0 ? sum / weightSum : 0;
+    }
+  
+    // step / zoh / fallback
+    return fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
   }
 
   /* ------------------------------------------------------------------
@@ -4239,7 +4587,7 @@
       },
       pcmData: {
         get: function () {
-          return new Uint8Array(pcm);
+          return pcm;
         },
         set: function (value) {
           _self.generatePCM(value);
@@ -4519,7 +4867,7 @@
     };
 
     _self.getAmplitudo = function (offset, channel, ratio) {
-      return getAmplitudo(pcm, offset, cfg.channels, channel, cfg.bitDepth, cfg.floatMode, _this.interpolationMode, dv, ratio);
+      return SuperPCM.getAmplitudo(pcm, offset, cfg.channels, channel, cfg.bitDepth, cfg.floatMode, _this.interpolationMode, dv, ratio);
     };
     _self.generatePCM = function (pcmData) {
       if (pcmData) pcm = new Uint8Array(pcmData);
@@ -4819,8 +5167,8 @@
                   input: _this.inputBuffer,
                   output: _this.outputBuffer,
                   amplitudo: _this.inputBuffer[c][i],
-                  getAmplitudo: function (channel) {
-                    return _this.inputBuffer[channel] != null ? _this.inputBuffer[channel][i]: 0;
+                  getAmplitudo: function (channel, index = i) {
+                    return _this.inputBuffer[channel] != null ? _this.inputBuffer[channel][index]: 0;
                   },
                   index: i,
                   channel: c,
@@ -5256,179 +5604,571 @@
       endFrame: endFrame
     };
   };
+  
+  /**
+  * SuperPCM Amplitudo
+  * Resampling amplitudo with interpolation
+  * Support asynchronous processing on .resample()
+  */
+  SuperPCM.Amplitudo = function(pcm, options = {}) {
+    var cfg = assignDefaults( {
+      bitDepth: SuperPCM.defaults.bitDepth,
+      sampleRate: SuperPCM.defaults.sampleRate,
+      float: SuperPCM.defaults.float,
+      channels: SuperPCM.defaults.channels,
+      interpolationMode: SuperPCM.interpolationMode
+    }, options || {});
+    
+    var dv;
+    if (pcm) dv = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+    
+    Object.defineProperties(this, {
+      pcmData: {
+        get: function () {
+          return pcm;
+        },
+        set: function (value) {
+          if (pcm != value) {
+            pcm = value;
+            dv = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+          }
+        },
+        enumerable: true,
+        configurable: true
+      },
+      bitDepth: {
+        get: function () {
+          return cfg.bitDepth;
+        },
+        set: function (value) {
+          if (cfg.bitDepth != value) cfg.bitDepth = value;
+        },
+        enumerable: true,
+        configurable: true
+      },
+      sampleRate: {
+        get: function () {
+          return cfg.sampleRate;
+        },
+        set: function (value) {
+          if (cfg.sampleRate != value) cfg.sampleRate = value;
+        },
+        enumerable: true,
+        configurable: true
+      },
+      float: {
+        get: function () {
+          return cfg.float;
+        },
+        set: function (value) {
+          if (cfg.float != value) cfg.float = value;
+        },
+        enumerable: true,
+        configurable: true
+      },
+      float: {
+        get: function () {
+          return cfg.float;
+        },
+        set: function (value) {
+          if (cfg.float != value) cfg.float = value;
+        },
+        enumerable: true,
+        configurable: true
+      },
+      interpolationMode: {
+        get: function () {
+          return cfg.interpolationMode;
+        },
+        set: function (value) {
+          if (cfg.interpolationMode != value) cfg.interpolationMode = value;
+        },
+        enumerable: true,
+        configurable: true
+      },
+    });
+    
+    this.get = function(offset, channel, ratio = 1) {
+      return SuperPCM.getAmplitudo(pcm, offset, cfg.channels, channel, cfg.bitDepth, cfg.float, cfg.interpolationMode, dv, ratio);
+    };
+    this.format = function(format = {}) {
+      cfg.bitDepth = format.bitDepth ?? cfg.bitDepth;
+      cfg.sampleRate = format.sampleRate ?? cfg.sampleRate;
+      cfg.float = format.float ?? cfg.float;
+      cfg.channels = format.channels ?? cfg.channels;
+    };
+    this.resample = function (options = {}) {
+      var ratio = 1;
+      var async = options.async ?? true;
+      var asyncFrameSize = options.frameSize ?? options.asyncFrameSize ?? SuperPCM.asyncFrameSize;
+    
+      if (options.ratio && typeof options.ratio == "number") {
+        ratio = clamp(options.ratio, 0.25, 4);
+      } else if (options.sampleRate && typeof options.sampleRate == "number") {
+        ratio = clamp(
+          options.sampleRate,
+          SuperPCM.minimumSampleRate,
+          SuperPCM.maximumSampleRate
+        ) / cfg.sampleRate;
+      }
+    
+      var offset = 0;
+      var frameSize = getBytesPerSample(cfg.bitDepth, cfg.float) * cfg.channels;
+      var totalFramesSrc = Math.floor(pcm.length / frameSize);
+      var totalFramesDst = Math.floor(totalFramesSrc * ratio);
+    
+      var out = new Uint8Array(frameSize * totalFramesDst);
+      var dvOut = new DataView(out.buffer);
+    
+      var job = new SuperPCM.AsyncProcessing({
+        async: !!async,
+        frameSize: asyncFrameSize,
+    
+        process: function (v) {
+          var i = v.index;
+    
+          for (var c = 0; c < cfg.channels; c++) {
+            offset = encodeSample(
+              SuperPCM.getAmplitudo(
+                pcm,
+                i / ratio,
+                cfg.channels,
+                c,
+                cfg.bitDepth,
+                cfg.float,
+                cfg.interpolationMode,
+                dv,
+                ratio
+              ),
+              cfg.bitDepth,
+              cfg.float,
+              out,
+              dvOut,
+              offset
+            );
+          }
+        }
+      });
+    
+      job.initial({
+        index: 0,
+        total: totalFramesDst
+      });
+    
+      if (async) {
+        return {
+          process: function (callback) {
+            return job.processing(function (e) {
+              if (e.done || e.stopped) {
+                dvOut = null;
+              }
+    
+              if (typeof callback == "function") {
+                callback({
+                  done: e.done,
+                  stopped: e.stopped,
+                  paused: e.paused,
+                  pcm: out,
+                  total: totalFramesDst,
+                  length: e.vars.index,
+                  job: job
+                });
+              }
+            });
+          },
+    
+          stop: function () {
+            return job.stop();
+          },
+    
+          pause: function () {
+            return job.pause();
+          },
+    
+          resume: function (callback) {
+            return job.resume(callback);
+          },
+    
+          status: function () {
+            return job.status();
+          },
+    
+          job: job,
+          pcm: out
+        };
+      }
+    
+      job.processing();
+    
+      dvOut = null;
+    
+      return out;
+    };
+  }
 
   /**
-  * Manually converts PCM data: Resampling, Channel Remapping, and Bit-Depth Scaling.
-  * @param {Uint8Array} pcm - Original PCM data.
-  * @param {Object} from - Source format {sampleRate, channels, bitDepth, float}.
-  * @param {Object} to - Target format {sampleRate, channels, bitDepth, float}.
-  * @param {Boolean} interpolationMode - Interpolation the amplitudo
-  */
-  SuperPCM.Resample = function (pcm, from, to) {
-    // FALLBACK LOGIC: If 'to' is missing, inherit values from 'from'
+   * Manually converts PCM data: Resampling, Channel Remapping, and Bit-Depth Scaling.
+   * @param {Uint8Array} pcm - Original PCM data.
+   * @param {Object} from - Source format {sampleRate, channels, bitDepth, float}.
+   * @param {Object} to - Target format {sampleRate, channels, bitDepth, float}.
+   * @param {Boolean|Object} async - false = sync, true/object = async .process()
+   */
+  SuperPCM.Resample = function (pcm, from, to, async = false) {
     to = to || {};
-    to.sampleRate = to.sampleRate != null ? clamp(to.sampleRate, 0, SuperPCM.maximumSampleRate) : from.sampleRate;
+  
+    to.sampleRate = to.sampleRate != null
+      ? clamp(to.sampleRate, 0, SuperPCM.maximumSampleRate)
+      : from.sampleRate;
+  
     to.channels = to.channels != null ? to.channels : from.channels;
     to.float = to.float != null ? to.float : from.float;
-    to.bitDepth = to.float ? SuperPCM.BIT_DEPTH_32 : (to.bitDepth != null ? to.bitDepth : from.bitDepth);
-    
+    to.bitDepth = to.float
+      ? SuperPCM.BIT_DEPTH_32
+      : (to.bitDepth != null ? to.bitDepth : from.bitDepth);
+  
+    var isAsync = !!async;
+    var asyncFrameSize = async != null && typeof async === "object" && async.frameSize != null
+      ? async.frameSize
+      : SuperPCM.asyncFrameSize;
+  
     var ratio = from.sampleRate / to.sampleRate;
+  
     var srcBytesPerSample = getBytesPerSample(from.bitDepth, from.float);
     var dstBytesPerSample = getBytesPerSample(to.bitDepth, to.float);
-
+  
     var srcFrameSize = srcBytesPerSample * from.channels;
     var dstFrameSize = dstBytesPerSample * to.channels;
-
+  
     var totalFramesSrc = Math.floor(pcm.length / srcFrameSize);
     var totalFramesDst = Math.floor(totalFramesSrc / ratio);
-
+  
     var out = new Uint8Array(totalFramesDst * dstFrameSize);
     var dvSrc = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
     var dvDst = new DataView(out.buffer);
+  
     var offsetDst = 0;
-
-    for (var i = 0; i < totalFramesDst; i++) {
-      var srcPos = i * ratio;
-      var indexLow = Math.floor(srcPos);
-      var indexHigh = Math.min(indexLow + 1, totalFramesSrc - 1);
-      var weight = srcPos - indexLow;
-
-      for (var dstCh = 0; dstCh < to.channels; dstCh++) {
-        var interpolatedValue = 0;
-
-        // 1. DOWNMIXING LOGIC (Stereo to Mono)
-        if (to.channels < from.channels) {
-          var sumLow = 0,
-          sumHigh = 0;
-          for (var srcCh = 0; srcCh < from.channels; srcCh++) {
+  
+    var job = new SuperPCM.AsyncProcessing({
+      async: isAsync,
+      frameSize: asyncFrameSize,
+  
+      process: function (v) {
+        var i = v.index;
+  
+        var srcPos = i * ratio;
+        var indexLow = Math.floor(srcPos);
+        var indexHigh = Math.min(indexLow + 1, totalFramesSrc - 1);
+        var weight = srcPos - indexLow;
+  
+        for (var dstCh = 0; dstCh < to.channels; dstCh++) {
+          var interpolatedValue = 0;
+  
+          // 1. DOWNMIXING LOGIC
+          if (to.channels < from.channels) {
+            var sumLow = 0;
+            var sumHigh = 0;
+  
+            for (var srcCh = 0; srcCh < from.channels; srcCh++) {
+              var offLow = indexLow * srcFrameSize + srcCh * srcBytesPerSample;
+              var offHigh = indexHigh * srcFrameSize + srcCh * srcBytesPerSample;
+  
+              sumLow += getSample(pcm, dvSrc, offLow, from.bitDepth, from.float);
+              sumHigh += getSample(pcm, dvSrc, offHigh, from.bitDepth, from.float);
+            }
+  
+            interpolatedValue =
+              (sumLow / from.channels) +
+              weight * ((sumHigh / from.channels) - (sumLow / from.channels));
+          }
+  
+          // 2. UPMIXING LOGIC
+          else if (from.channels === 1 && to.channels > 1) {
+            var offLow = indexLow * srcFrameSize;
+            var offHigh = indexHigh * srcFrameSize;
+  
+            var valLow = getSample(pcm, dvSrc, offLow, from.bitDepth, from.float);
+            var valHigh = getSample(pcm, dvSrc, offHigh, from.bitDepth, from.float);
+  
+            interpolatedValue = valLow + weight * (valHigh - valLow);
+          }
+  
+          // 3. DEFAULT CHANNEL MAPPING
+          else {
+            var srcCh = dstCh < from.channels ? dstCh : 0;
+  
             var offLow = indexLow * srcFrameSize + srcCh * srcBytesPerSample;
             var offHigh = indexHigh * srcFrameSize + srcCh * srcBytesPerSample;
-            sumLow += getSample(pcm, dvSrc, offLow, from.bitDepth, from.float);
-            sumHigh += getSample(pcm, dvSrc, offHigh, from.bitDepth, from.float);
+  
+            var valLow = getSample(pcm, dvSrc, offLow, from.bitDepth, from.float);
+            var valHigh = getSample(pcm, dvSrc, offHigh, from.bitDepth, from.float);
+  
+            interpolatedValue = valLow + weight * (valHigh - valLow);
           }
-          interpolatedValue = (sumLow / from.channels) + weight * ((sumHigh / from.channels) - (sumLow / from.channels));
+  
+          offsetDst = encodeSample(
+            interpolatedValue,
+            to.bitDepth,
+            to.float,
+            out,
+            dvDst,
+            offsetDst
+          );
         }
-
-        // 2. UPMIXING LOGIC (Mono to Stereo)
-        else if (from.channels === 1 && to.channels > 1) {
-          // Take data from channel 0 (the only available channel)
-          var offLow = indexLow * srcFrameSize;
-          var offHigh = indexHigh * srcFrameSize;
-
-          var valLow = getSample(pcm, dvSrc, offLow, from.bitDepth, from.float);
-          var valHigh = getSample(pcm, dvSrc, offHigh, from.bitDepth, from.float);
-
-          // The interpolation result is duplicated to all dstCh (left & right)
-          interpolatedValue = valLow + weight * (valHigh - valLow);
-        }
-
-        // 3. DEFAULT LOGIC (Mapping 1:1)
-        else {
-          var srcCh = dstCh < from.channels ? dstCh: 0;
-          var offLow = indexLow * srcFrameSize + srcCh * srcBytesPerSample;
-          var offHigh = indexHigh * srcFrameSize + srcCh * srcBytesPerSample;
-
-          var valLow = getSample(pcm, dvSrc, offLow, from.bitDepth, from.float);
-          var valHigh = getSample(pcm, dvSrc, offHigh, from.bitDepth, from.float);
-          interpolatedValue = valLow + weight * (valHigh - valLow);
-        }
-
-        offsetDst = encodeSample(interpolatedValue, to.bitDepth, to.float, out, dvDst, offsetDst);
       }
+    });
+  
+    job.initial({
+      index: 0,
+      total: totalFramesDst
+    });
+  
+    if (isAsync) {
+      return {
+        process: function (callback) {
+          return job.processing(function (e) {
+            if (e.done || e.stopped) {
+              dvSrc = null;
+              dvDst = null;
+            }
+  
+            if (typeof callback === "function") {
+              callback({
+                done: e.done,
+                stopped: e.stopped,
+                paused: e.paused,
+                pcm: out,
+                total: totalFramesDst,
+                length: e.vars.index,
+                job: job
+              });
+            }
+          });
+        },
+  
+        stop: function () {
+          return job.stop();
+        },
+  
+        pause: function () {
+          return job.pause();
+        },
+  
+        resume: function (callback) {
+          return job.resume(callback);
+        },
+  
+        status: function () {
+          return job.status();
+        },
+  
+        job: job,
+        pcm: out
+      };
     }
-
+  
+    job.processing();
+  
+    dvSrc = null;
+    dvDst = null;
+  
     return out;
   };
 
   /**
   * Merge multiple audio sources with full format normalization.
+  * Support asynchronous processing
   */
-  SuperPCM.MergeAudioSource = function (sources, options = {}) {
+  SuperPCM.MergeAudioSource = function (sources, options = {}, async = false) {
     var audioSourcePCM = new audioSource(),
-    index = 0,
-    resultData = [],
-    targetFormat = null,
-    samplePosition = 0,
-    sampleIndex = [];
-
+      index = 0,
+      resultData = [],
+      targetFormat = null,
+      samplePosition = 0,
+      sampleIndex = [];
+  
+    var isAsync = !!async;
+    var asyncFrameSize = async != null && typeof async == "object" && async.frameSize != null
+      ? async.frameSize
+      : SuperPCM.asyncFrameSize;
+  
     audioSourcePCM.headers = options.headers || {};
-
-    var startProcess = function() {
-      if (sources.length != 0 && index < sources.length) {
+  
+    function emitProgress(data) {
+      if (typeof options.progress == "function") {
+        options.progress(data);
+      }
+    }
+  
+    function finalize(resolve) {
+      var finalPCM = concatUint8Arrays(resultData);
+  
+      resolve({
+        pcm: finalPCM,
+        format: targetFormat,
+        sampleIndex: sampleIndex
+      });
+    }
+  
+    function runTaskMaybe(task, stage, done) {
+      if (task && typeof task.process == "function") {
+        task.process(function (e) {
+          emitProgress({
+            done: false,
+            stage: stage,
+            pcm: e.pcm,
+            result: e.result,
+            index: index,
+            total: sources.length,
+            length: e.length,
+            subTotal: e.total,
+            format: targetFormat,
+            sampleIndex: sampleIndex,
+            job: e.job
+          });
+  
+          if (e.done || e.stopped) {
+            done(e.pcm || (e.result && e.result.pcm) || task.pcm);
+          }
+        });
+      } else {
+        done(task);
+      }
+    }
+  
+    function startProcess(resolve) {
+      if (sources.length !== 0 && index < sources.length) {
         audioSourcePCM.src = sources[index];
         audioSourcePCM.start();
+      } else {
+        finalize(resolve);
       }
-      index++;
-    };
-
-    startProcess();
-    return new Promise(function(resolve) {
+    }
+  
+    return new Promise(function (resolve) {
       audioSourcePCM.onSuccess = function (result) {
         var currentData = result.data;
-
+  
         if (!targetFormat) {
-          // Lock the target format based on the first file
           targetFormat = {
-            sampleRate: clamp(options.sampleRate != null ? options.sampleRate: result.sampleRate, 0, SuperPCM.maximumSampleRate),
-            bitDepth: options.bitDepth != null ? (options.floatMode ? SuperPCM.BIT_DEPTH_32: options.bitDepth): result.bitDepth,
-            float: options.floatMode != null ? options.floatMode: result.float,
-            channels: options.stereo != null ? (options.stereo ? 2: 1): result.channels
+            sampleRate: clamp(
+              options.sampleRate != null ? options.sampleRate : result.sampleRate,
+              0,
+              SuperPCM.maximumSampleRate
+            ),
+            bitDepth: options.bitDepth != null
+              ? (options.floatMode ? SuperPCM.BIT_DEPTH_32 : options.bitDepth)
+              : result.bitDepth,
+            float: options.floatMode != null ? options.floatMode : result.float,
+            channels: options.stereo != null ? (options.stereo ? 2 : 1) : result.channels
           };
         }
-        // Check if conversion is needed (SampleRate, Channels, or BitDepth/Float mismatch)
-        var mismatch = result.sampleRate !== targetFormat.sampleRate ||
-        result.channels !== targetFormat.channels ||
-        result.bitDepth !== targetFormat.bitDepth ||
-        result.float !== targetFormat.float;
-
+  
+        var mismatch =
+          result.sampleRate !== targetFormat.sampleRate ||
+          result.channels !== targetFormat.channels ||
+          result.bitDepth !== targetFormat.bitDepth ||
+          result.float !== targetFormat.float;
+  
+        function afterResample(data) {
+          currentData = data;
+  
+          if (options.gapless) {
+            currentData = SuperPCM.Gapless(currentData, targetFormat, {
+              threshold: options.gaplessThreshold
+            }).pcm;
+          }
+  
+          function afterStereoEnhancer(data2) {
+            currentData = data2;
+  
+            sampleIndex.push(samplePosition);
+            samplePosition += currentData.length;
+            resultData.push(currentData);
+  
+            emitProgress({
+              done: false,
+              stage: "merge",
+              pcm: currentData,
+              index: index,
+              total: sources.length,
+              length: index + 1,
+              format: targetFormat,
+              sampleIndex: sampleIndex
+            });
+  
+            currentData = null;
+            index++;
+  
+            if (index >= sources.length) {
+              finalize(resolve);
+            } else {
+              startProcess(resolve);
+            }
+          }
+  
+          if (options.stereo && (options.stereoEnhancer != null ? options.stereoEnhancer : true)) {
+            var enhTask = SuperPCM.StereoEnhancer(
+              currentData,
+              {
+                ...targetFormat,
+                channels: result.channels
+              },
+              typeof options.stereoEnhancer == "object" ? options.stereoEnhancer : {},
+              isAsync ? { frameSize: asyncFrameSize } : false
+            );
+  
+            runTaskMaybe(enhTask, "stereoEnhancer", afterStereoEnhancer);
+          } else {
+            afterStereoEnhancer(currentData);
+          }
+        }
+  
         if (mismatch) {
-          currentData = SuperPCM.Resample(currentData, {
-            sampleRate: result.sampleRate,
-            channels: result.channels,
-            bitDepth: result.bitDepth,
-            float: result.float
-          }, {
-            ...targetFormat, channels: options.stereo && (options.stereoEnhancer != null ? options.stereoEnhancer: false) ? result.channels: targetFormat.channels
-          });
-        }
-
-        if (options.gapless) {
-          currentData = SuperPCM.Gapless(currentData, targetFormat, {
-            threshold: options.gaplessThreshold
-          }).pcm;
-        }
-        if (options.stereo && (options.stereoEnhancer != null ? options.stereoEnhancer: true)) {
-          currentData = SuperPCM.StereoEnhancer(currentData, {
-            ...targetFormat, channels: result.channels
-          }, typeof options.stereoEnhancer == "object" ? options.stereoEnhancer: {});
-        }
-
-        sampleIndex.push(samplePosition);
-        samplePosition += currentData.length;
-        resultData.push(currentData);
-
-        if (index >= sources.length) {
-          var finalPCM = concatUint8Arrays(resultData);
-          resolve( {
-            pcm: finalPCM, format: targetFormat, sampleIndex: sampleIndex
-          });
-          
-          currentData = null;
+          var resampleTask = SuperPCM.Resample(
+            currentData,
+            {
+              sampleRate: result.sampleRate,
+              channels: result.channels,
+              bitDepth: result.bitDepth,
+              float: result.float
+            },
+            {
+              ...targetFormat,
+              channels: options.stereo &&
+                (options.stereoEnhancer != null ? options.stereoEnhancer : false)
+                ? result.channels
+                : targetFormat.channels
+            },
+            isAsync ? { frameSize: asyncFrameSize } : false
+          );
+  
+          runTaskMaybe(resampleTask, "resample", afterResample);
         } else {
-          startProcess();
+          afterResample(currentData);
         }
       };
-
-      audioSourcePCM.onError = function (err) {
+  
+      audioSourcePCM.onError = function () {
+        emitProgress({
+          done: false,
+          stage: "error",
+          index: index,
+          total: sources.length,
+          length: index + 1,
+          format: targetFormat,
+          sampleIndex: sampleIndex
+        });
+  
+        index++;
+  
         if (index >= sources.length) {
-          var finalPCM = concatUint8Arrays(resultData);
-          resolve( {
-            pcm: finalPCM, format: targetFormat
-          });
+          finalize(resolve);
         } else {
-          startProcess();
+          startProcess(resolve);
         }
       };
+  
+      startProcess(resolve);
     });
   };
 
@@ -5493,47 +6233,31 @@
   * - No hi-hat gating
   * - Stereo width configurable
   * - Haas configurable
-  * - Mode preset (natural / wide / extreme)
+  * - Preset mode (natural / wide / extreme)
+  * - Support asynchronous processing
   */
-  SuperPCM.StereoEnhancer = function (pcm, format, options) {
+  SuperPCM.StereoEnhancer = function (pcm, format, options, async = false) {
     if (!format) return pcm;
     options = options || {};
-
+  
+    var isAsync = !!async;
+    var asyncFrameSize = async != null && typeof async == "object" && async.frameSize != null
+      ? async.frameSize
+      : SuperPCM.asyncFrameSize;
+  
     var bitDepth = format.bitDepth;
     var isFloat = !!format.float;
     var bytesPerSample = getBytesPerSample(bitDepth, isFloat);
-
     var sampleRate = format.sampleRate || 48000;
-
-    // =========================
-    // PRESETS + OPTIONS
-    // =========================
+  
     var presets = {
-      natural: {
-        width: 1.0,
-        brightness: 1.0,
-        haas: 0.1,
-        bass: 1.05,
-        cross: 0.02
-      },
-      wide: {
-        width: 1.2,
-        brightness: 1.2,
-        haas: 0.2,
-        bass: 1.08,
-        cross: 0.02
-      },
-      extreme: {
-        width: 1.4,
-        brightness: 1.5,
-        haas: 0.3,
-        bass: 1.10,
-        cross: 0.02
-      }
+      natural: { width: 1.0, brightness: 1.0, haas: 0.1, bass: 1.05, cross: 0.02 },
+      wide:    { width: 1.2, brightness: 1.2, haas: 0.2, bass: 1.08, cross: 0.02 },
+      extreme: { width: 1.4, brightness: 1.5, haas: 0.3, bass: 1.10, cross: 0.02 }
     };
-
+  
     var preset = presets[options.mode || "wide"] || presets.wide;
-
+  
     var width = options.width ?? preset.width;
     var brightness = options.brightness ?? preset.brightness;
     var haasAmount = options.haasAmount ?? preset.haas;
@@ -5542,415 +6266,537 @@
     var cross = options.cross ?? preset.cross;
     var haasEnabled = options.haas !== false;
     var bassMono = options.bassMono !== false;
-
+  
+    function createAsyncReturn(job, out, total, clean) {
+      if (isAsync) {
+        return {
+          process: function (callback) {
+            return job.processing(function (e) {
+              if (e.done || e.stopped) clean();
+  
+              if (typeof callback == "function") {
+                callback({
+                  done: e.done,
+                  stopped: e.stopped,
+                  paused: e.paused,
+                  pcm: out,
+                  total: total,
+                  length: e.vars.index,
+                  job: job
+                });
+              }
+            });
+          },
+  
+          stop: function () {
+            return job.stop();
+          },
+  
+          pause: function () {
+            return job.pause();
+          },
+  
+          resume: function (callback) {
+            return job.resume(callback);
+          },
+  
+          status: function () {
+            return job.status();
+          },
+  
+          job: job,
+          pcm: out
+        };
+      }
+  
+      job.processing();
+      clean();
+      return out;
+    }
+  
     // =========================
     // STEREO MODE
     // =========================
     if (format.channels === 2) {
       var frameSize = bytesPerSample * 2;
       var totalFrames = Math.floor(pcm.length / frameSize);
-
+  
       if (!format._enhStateStereo) {
         format._enhStateStereo = {
           lowL: 0,
           lowR: 0,
           sideSmooth: 0,
+          bassSmooth: 0,
           haasBuffer: new Float32Array(4096),
           haasIndex: 0
         };
       }
-
+  
       var s = format._enhStateStereo;
-
+  
       var out = new Uint8Array(pcm.length);
       var dvSrc = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
       var dvDst = new DataView(out.buffer);
-      var offset = 0;
-
+  
       var haasSamples = Math.floor(sampleRate * (options.haasDelay ?? 6) / 1000);
-
-      for (var i = 0; i < totalFrames; i++) {
-        var pos = i * frameSize;
-
-        var left = getSample(pcm, dvSrc, pos, bitDepth, isFloat);
-        var right = getSample(pcm, dvSrc, pos + bytesPerSample, bitDepth, isFloat);
-
-        // MID/SIDE
-        var mid = (left + right) * 0.5;
-        var side = (left - right) * 0.5 * brightness;
-
-        // LOW (bass mono safe)
-        s.lowL += 0.02 * (left - s.lowL);
-        s.lowR += 0.02 * (right - s.lowR);
-        var bassRaw = (s.lowL + s.lowR) * 0.5;
-
-        // ROUND BASS (STEREO)
-        var smoothCoeff = 0.02 + 0.12 * bassRoundness;
-        s.bassSmooth = (s.bassSmooth || 0) + smoothCoeff * (bassRaw - (s.bassSmooth || 0));
-
-        var bass = s.bassSmooth;
-
-        var drive = 1 + bassRoundness * 0.8;
-        bass = Math.tanh(bass * drive);
-
-        if (bassMono) {
-          side -= bass * 0.2;
-          // Haas only to high
-          haas *= brightness;
+  
+      var job = new SuperPCM.AsyncProcessing({
+        async: isAsync,
+        frameSize: asyncFrameSize,
+  
+        process: function (v) {
+          var i = v.index;
+          var pos = i * frameSize;
+  
+          var left = getSample(pcm, dvSrc, pos, bitDepth, isFloat);
+          var right = getSample(pcm, dvSrc, pos + bytesPerSample, bitDepth, isFloat);
+  
+          var mid = (left + right) * 0.5;
+          var side = (left - right) * 0.5 * brightness;
+  
+          s.lowL += 0.02 * (left - s.lowL);
+          s.lowR += 0.02 * (right - s.lowR);
+  
+          var bassRaw = (s.lowL + s.lowR) * 0.5;
+  
+          var smoothCoeff = 0.02 + 0.12 * bassRoundness;
+          s.bassSmooth = (s.bassSmooth || 0) + smoothCoeff * (bassRaw - (s.bassSmooth || 0));
+  
+          var bass = s.bassSmooth;
+          var drive = 1 + bassRoundness * 0.8;
+          bass = Math.tanh(bass * drive);
+  
+          if (bassMono) {
+            side -= bass * 0.2;
+          }
+  
+          side *= width;
+  
+          var maxSide = Math.abs(mid) * 0.9;
+          var sideRatio = side / (maxSide + 1e-6);
+          side = maxSide * Math.tanh(sideRatio);
+  
+          s.sideSmooth += 0.1 * (side - s.sideSmooth);
+          side = Math.tanh(s.sideSmooth);
+  
+          s.haasBuffer[s.haasIndex] = side;
+  
+          var readIndex = s.haasIndex - haasSamples;
+          if (readIndex < 0) readIndex += s.haasBuffer.length;
+  
+          var haas = s.haasBuffer[readIndex];
+  
+          s.haasIndex = (s.haasIndex + 1) % s.haasBuffer.length;
+  
+          if (haasEnabled) {
+            var haasSafe = haasAmount / (1 + haasAmount * 0.5);
+            var mix = haasSafe * 2;
+  
+            side = side * (1 - mix) + haas * mix;
+          }
+  
+          side += haas * 0.12;
+  
+          var outL = mid + side + bass * (bassBoost - 1);
+          var outR = mid - side + bass * (bassBoost - 1);
+  
+          var l = outL;
+          var r = outR;
+  
+          outL = l * (1 - cross) + r * cross;
+          outR = r * (1 - cross) + l * cross;
+  
+          var monoCheck = (outL + outR) * 0.5;
+  
+          outL = outL * 0.95 + monoCheck * 0.05;
+          outR = outR * 0.95 + monoCheck * 0.05;
+  
+          outL = Math.tanh(outL);
+          outR = Math.tanh(outR);
+  
+          var outPos = i * frameSize;
+          encodeSample(outL, bitDepth, isFloat, out, dvDst, outPos);
+          encodeSample(outR, bitDepth, isFloat, out, dvDst, outPos + bytesPerSample);
         }
-
-        // WIDTH
-        side *= width;
-
-        // SOFT SIDE LIMIT (NO CLICK)
-        var maxSide = Math.abs(mid) * 0.9;
-        var ratio = side / (maxSide + 1e-6);
-        side = maxSide * Math.tanh(ratio);
-
-        // SMOOTHING
-        s.sideSmooth += 0.1 * (side - s.sideSmooth);
-        side = s.sideSmooth;
-        // anti spike from delay
-        side = Math.tanh(side);
-
-        // HAAS (stereo mode)
-        s.haasBuffer[s.haasIndex] = side;
-
-        var readIndex = s.haasIndex - haasSamples;
-        if (readIndex < 0) readIndex += s.haasBuffer.length;
-
-        var haas = s.haasBuffer[readIndex];
-
-        s.haasIndex = (s.haasIndex + 1) % s.haasBuffer.length;
-
-        // SAFE HAAS (no double)
-        if (haasEnabled) {
-          var haasSafe = haasAmount / (1 + haasAmount * 0.5);
-          var mix = haasSafe * 2;
-
-          // blend
-          side = side * (1 - mix) + haas * mix;
-        }
-        // stereo air feel
-        side += haas * 0.12;
-
-        // RECONSTRUCT WITH BASS BOOST
-        var outL = mid + side + bass * (bassBoost - 1);
-        var outR = mid - side + bass * (bassBoost - 1);
-
-        // CROSSFEED
-        var l = outL;
-        var r = outR;
-        outL = l * (1 - cross) + r * cross;
-        outR = r * (1 - cross) + l * cross;
-
-        // MONO COMP (SMOOTH)
-        var monoCheck = (outL + outR) * 0.5;
-        outL = outL * 0.95 + monoCheck * 0.05;
-        outR = outR * 0.95 + monoCheck * 0.05;
-
-        // SOFT CLIP
-        outL = Math.tanh(outL);
-        outR = Math.tanh(outR);
-
-        offset = encodeSample(outL, bitDepth, isFloat, out, dvDst, offset);
-        offset = encodeSample(outR, bitDepth, isFloat, out, dvDst, offset);
-      }
-
-      format._enhStateStereo = null;
-      return out;
+      });
+  
+      job.initial({
+        index: 0,
+        total: totalFrames
+      });
+  
+      return createAsyncReturn(job, out, totalFrames, function () {
+        dvSrc = null;
+        dvDst = null;
+      });
     }
-
+  
     // =========================
     // MONO → STEREO MODE
     // =========================
     if (format.channels !== 1) return pcm;
-
+  
     var totalSamples = Math.floor(pcm.length / bytesPerSample);
-
+  
     if (!format._enhState) {
       format._enhState = {
         low: 0,
         mid: 0,
-
+  
         xL: 0,
         yL: 0,
         xR: 0,
         yR: 0,
-
+  
         prev: 0,
         env: 0,
         hold: 0,
-
+  
         monoMix: 0,
         sideMix: 1,
-
+  
         haasBuffer: new Float32Array(4096),
         haasIndex: 0
       };
     }
-
-    var s = format._enhState;
-
-    var out = new Uint8Array(pcm.length * 2);
-    var dvSrc = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
-    var dvDst = new DataView(out.buffer);
-    var dstOffset = 0;
-
+  
+    var sm = format._enhState;
+  
+    var outMono = new Uint8Array(pcm.length * 2);
+    var dvSrcMono = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+    var dvDstMono = new DataView(outMono.buffer);
+  
     var lowCoeff = 0.018;
     var midCoeff = 0.08;
-
-    var haasSamples = Math.floor(sampleRate * 8 / 1000);
+  
+    var monoHaasSamples = Math.floor(sampleRate * 8 / 1000);
     var holdStrong = Math.floor(sampleRate * 0.006);
     var holdWeak = Math.floor(sampleRate * 0.002);
-
-    for (var j = 0; j < totalSamples; j++) {
-      var pos = j * bytesPerSample;
-      var input = decodeSample(pcm, dvSrc, pos, bitDepth, isFloat).value;
-
-      var delta = input - s.prev;
-      s.prev = input;
-
-      var abs = Math.abs(input);
-      s.env += 0.012 * (abs - s.env);
-
-      var strength = Math.abs(delta);
-
-      var isStrong = strength > s.env * 3.5;
-      var isWeak = strength > s.env * 1.8;
-
-      if (isStrong) s.hold = holdStrong;
-      else if (isWeak) s.hold = holdWeak;
-      else if (s.hold > 0) s.hold--;
-
-      s.low += lowCoeff * (input - s.low);
-      // EXTRA SMOOTH BASS
-      var smoothCoeff = 0.02 + 0.12 * bassRoundness;
-      s.lowSmooth = (s.lowSmooth || 0) + smoothCoeff * (s.low - (s.lowSmooth || 0));
-      var low = s.lowSmooth;
-      // BASS SATURATION (analog feel)
-      var drive = 1 + bassRoundness * 0.8;
-      low = Math.tanh(low * drive);
-
-      // protect low (anti click kick)
-      s.lowSafe = s.lowSafe || 0;
-      s.lowSafe += 0.1 * (low - s.lowSafe);
-      low = s.lowSafe;
-
-      var tmp = input - low;
-
-      s.mid += midCoeff * (tmp - s.mid);
-      var mid = s.mid;
-
-      var high = tmp - mid;
-      // SMOOTH HIGH
-      s.highSmooth = (s.highSmooth || 0) + 0.2 * (high - (s.highSmooth || 0));
-      // BLEND ORIGINAL + SMOOTH
-      var rawHigh = tmp - mid;
-      high = s.highSmooth * 0.7 + rawHigh * 0.3;
-      // SOFT LIMIT
-      var highLimit = 0.9;
-      high = highLimit * Math.tanh(high / highLimit);
-
-      var highFactor = isStrong ? 0.6: (isWeak ? 0.85: 1.0);
-      high *= highFactor;
-
-      var leftPhase = 0.34 * mid + 0.55 * high + s.xL - 0.34 * s.yL;
-      s.xL = mid + high;
-      s.yL = leftPhase;
-
-      var rightPhase = -0.34 * mid - 0.55 * high + s.xR + 0.34 * s.yR;
-      s.xR = mid + high;
-      s.yR = rightPhase;
-
-      // micro phase decorrelation (no delay)
-      var phaseShift = high * 0.42;
-      var sidePhase = (leftPhase - rightPhase) * 0.5;
-      var side = sidePhase * width * 2.5 + high * brightness * 1.15;
-      // extra width on high (no delay)
-      side += high * brightness * 0.3;
-
-      leftPhase += phaseShift;
-      rightPhase -= phaseShift;
-      // TRANSIENT LOCK (anti double)
-      if (isStrong) {
-        side = 0;
+  
+    var monoJob = new SuperPCM.AsyncProcessing({
+      async: isAsync,
+      frameSize: asyncFrameSize,
+  
+      process: function (v) {
+        var j = v.index;
+        var pos = j * bytesPerSample;
+  
+        var input = decodeSample(pcm, dvSrcMono, pos, bitDepth, isFloat).value;
+  
+        var delta = input - sm.prev;
+        sm.prev = input;
+  
+        var abs = Math.abs(input);
+        sm.env += 0.012 * (abs - sm.env);
+  
+        var strength = Math.abs(delta);
+  
+        var isStrong = strength > sm.env * 3.5;
+        var isWeak = strength > sm.env * 1.8;
+  
+        if (isStrong) sm.hold = holdStrong;
+        else if (isWeak) sm.hold = holdWeak;
+        else if (sm.hold > 0) sm.hold--;
+  
+        sm.low += lowCoeff * (input - sm.low);
+  
+        var smoothCoeff = 0.02 + 0.12 * bassRoundness;
+        sm.lowSmooth = (sm.lowSmooth || 0) + smoothCoeff * (sm.low - (sm.lowSmooth || 0));
+  
+        var low = sm.lowSmooth;
+  
+        var drive = 1 + bassRoundness * 0.8;
+        low = Math.tanh(low * drive);
+  
+        sm.lowSafe = sm.lowSafe || 0;
+        sm.lowSafe += 0.1 * (low - sm.lowSafe);
+        low = sm.lowSafe;
+  
+        var tmp = input - low;
+  
+        sm.mid += midCoeff * (tmp - sm.mid);
+        var mid = sm.mid;
+  
+        var high = tmp - mid;
+  
+        sm.highSmooth = (sm.highSmooth || 0) + 0.2 * (high - (sm.highSmooth || 0));
+  
+        var rawHigh = tmp - mid;
+        high = sm.highSmooth * 0.7 + rawHigh * 0.3;
+  
+        var highLimit = 0.9;
+        high = highLimit * Math.tanh(high / highLimit);
+  
+        var highFactor = isStrong ? 0.6 : (isWeak ? 0.85 : 1.0);
+        high *= highFactor;
+  
+        var leftPhase = 0.34 * mid + 0.55 * high + sm.xL - 0.34 * sm.yL;
+        sm.xL = mid + high;
+        sm.yL = leftPhase;
+  
+        var rightPhase = -0.34 * mid - 0.55 * high + sm.xR + 0.34 * sm.yR;
+        sm.xR = mid + high;
+        sm.yR = rightPhase;
+  
+        var phaseShift = high * 0.42;
+        var sidePhase = (leftPhase - rightPhase) * 0.5;
+        var side = sidePhase * width * 2.5 + high * brightness * 1.15;
+  
+        side += high * brightness * 0.3;
+  
+        leftPhase += phaseShift;
+        rightPhase -= phaseShift;
+  
+        if (isStrong) {
+          side = 0;
+        }
+  
+        high *= 0.9 + 0.2 * brightness;
+  
+        var highEnergy = Math.abs(high);
+        var isHighTransient = highEnergy > sm.env * 0.2;
+  
+        sm.haasBuffer[sm.haasIndex] = side;
+  
+        var readIndex = (sm.haasIndex - monoHaasSamples + sm.haasBuffer.length) % sm.haasBuffer.length;
+        var nextIndex = (readIndex + 1) % sm.haasBuffer.length;
+        var frac = 0.5;
+  
+        var haas =
+          sm.haasBuffer[readIndex] * (1 - frac) +
+          sm.haasBuffer[nextIndex] * frac;
+  
+        sm.haasPrev = sm.haasPrev || 0;
+  
+        var haasOut = haas - sm.haasPrev * 0.25;
+        sm.haasPrev = haas;
+  
+        haas = haasOut;
+        haas *= brightness * 0.5;
+  
+        sm.haasIndex = (sm.haasIndex + 1) % sm.haasBuffer.length;
+  
+        var haasSuppress = 1.0;
+  
+        if (haasEnabled) {
+          sm.transient = sm.transient || 0;
+  
+          var target = isStrong ? 1.0 : (isWeak ? 0.5 : (isHighTransient ? 0.7 : 0.0));
+          var speed = target > sm.transient ? 0.35 : 0.08;
+  
+          sm.transient += speed * (target - sm.transient);
+  
+          var transientAmount = sm.transient;
+          haasSuppress = 1.0 - transientAmount;
+  
+          var haasSafe = haasAmount / (1 + haasAmount * 0.5);
+  
+          sm.haasClamp = sm.haasClamp || 1;
+  
+          var targetClamp = isStrong ? 0.5 : (isHighTransient ? 0.3 : 1.0);
+          var clampSpeed = targetClamp < sm.haasClamp ? 0.35 : 0.08;
+  
+          sm.haasClamp += clampSpeed * (targetClamp - sm.haasClamp);
+  
+          haas *= sm.haasClamp;
+  
+          var mix = haasSafe * haasSuppress * 1.8;
+          var energy = 1 / (1 + mix);
+  
+          side = (side + haas * mix) * energy;
+        }
+  
+        sm.haasSmooth = sm.haasSmooth || 0;
+        sm.haasSmooth += 0.2 * (haas - sm.haasSmooth);
+        haas = sm.haasSmooth;
+  
+        side += haas * 0.12 * haasSuppress;
+        side *= 0.98;
+        side = Math.tanh(side);
+  
+        var left = low * bassBoost + mid + side;
+        var right = low * bassBoost + mid - side;
+  
+        var mono = (left + right) * 0.5;
+  
+        left = left * 0.95 + mono * 0.05;
+        right = right * 0.95 + mono * 0.05;
+  
+        left = Math.tanh(left);
+        right = Math.tanh(right);
+  
+        var outPos = j * bytesPerSample * 2;
+        encodeSample(left, bitDepth, isFloat, outMono, dvDstMono, outPos);
+        encodeSample(right, bitDepth, isFloat, outMono, dvDstMono, outPos + bytesPerSample);
       }
-      // HI-HAT PRESENCE BOOST
-      high *= (0.9 + 0.2 * brightness);
-
-      // high-frequency transient detection
-      var highEnergy = Math.abs(high);
-      var isHighTransient = highEnergy > s.env * 0.2;
-
-      s.haasBuffer[s.haasIndex] = side;
-      var readIndex = (s.haasIndex - haasSamples + s.haasBuffer.length) % s.haasBuffer.length;
-      // fractional delay (anti comb / double)
-      var nextIndex = (readIndex + 1) % s.haasBuffer.length;
-      var frac = 0.5;
-      var haas = s.haasBuffer[readIndex] * (1 - frac) + s.haasBuffer[nextIndex] * frac;
-      // decorrelate
-      s.haasPrev = s.haasPrev || 0;
-      var haasOut = haas - s.haasPrev * 0.25;
-      s.haasPrev = haas;
-
-      haas = haasOut;
-      // only high freq
-      haas *= brightness * 0.5;
-
-      s.haasIndex = (s.haasIndex + 1) % s.haasBuffer.length;
-
-      // SAFE HAAS (anti double total)
-      if (haasEnabled) {
-        // smooth transient response (bukan on/off kasar)
-        s.transient = s.transient || 0;
-
-        // combine normal + high transient
-        var isTransient = isStrong || isHighTransient;
-
-        var target = isStrong ? 1.0: (isWeak ? 0.5: (isHighTransient ? 0.7: 0.0));
-        // faster attack, slower release
-        var speed = target > s.transient ? 0.35: 0.08;
-        s.transient += speed * (target - s.transient);
-
-        // 0 = sustain, 1 = full transient
-        var transientAmount = s.transient;
-
-        // Haas suppression
-        var haasSuppress = 1.0 - transientAmount;
-
-        // nonlinear safety
-        var haasSafe = haasAmount / (1 + haasAmount * 0.5);
-
-        // smooth clamp (no click)
-        s.haasClamp = s.haasClamp || 1;
-
-        // target: small during transient, normal during sustain
-        var targetClamp = isStrong ? 0.5: (isHighTransient ? 0.3: 1.0);
-
-        // fast attack, more slow release
-        var speed = targetClamp < s.haasClamp ? 0.35: 0.08;
-
-        s.haasClamp += speed * (targetClamp - s.haasClamp);
-
-        // apply
-        haas *= s.haasClamp;
-
-        // final mix
-        var mix = haasSafe * haasSuppress * 1.8;
-
-        // energy-preserving blend
-        var energy = 1 / (1 + mix);
-        side = (side + haas * mix) * energy;
-      }
-
-      s.haasSmooth = s.haasSmooth || 0;
-      s.haasSmooth += 0.2 * (haas - s.haasSmooth);
-      haas = s.haasSmooth;
-
-      // stereo air feel
-      side += haas * 0.12 * haasSuppress;
-      // anti spike delay
-      side *= 0.98;
-      side = Math.tanh(side);
-
-      var left = low * bassBoost + mid + side;
-      var right = low * bassBoost + mid - side;
-
-      var mono = (left + right) * 0.5;
-      left = left * 0.95 + mono * 0.05;
-      right = right * 0.95 + mono * 0.05;
-
-      left = Math.tanh(left);
-      right = Math.tanh(right);
-
-      dstOffset = encodeSample(left, bitDepth, isFloat, out, dvDst, dstOffset);
-      dstOffset = encodeSample(right, bitDepth, isFloat, out, dvDst, dstOffset);
-    }
-
+    });
+  
+    monoJob.initial({
+      index: 0,
+      total: totalSamples
+    });
+  
     format.channels = 2;
-    format._enhState = null;
-    return out;
+  
+    return createAsyncReturn(monoJob, outMono, totalSamples, function () {
+      format._enhState = null;
+      dvSrcMono = null;
+      dvDstMono = null;
+    });
   };
   
   /**
    * SuperPCM.NullTest
    * Compares the amplitude difference between two PCM streams (e.g., original vs decoded)
    * using the Phase Inversion / Delta Analysis method.
-   * * @param {Uint8Array} pcm1 - First PCM data buffer (e.g., Original reference)
+   * @param {Uint8Array} pcm1 - First PCM data buffer (e.g., Original reference)
    * @param {Uint8Array} pcm2 - Second PCM data buffer (e.g., Decoded ADPCM data)
    * @param {Object} format - The common format specifier {bitDepth, float, channels}
+   * @param {Booean} async - Asynchronous processing null test
    * @returns {Object} { deltaPCM, maxDelta, rmsError, totalSamples }
    */
-  SuperPCM.NullTest = function (pcm1, pcm2, format) {
-    if (!pcm1 || !pcm2) throw new Error("NullTest requires two PCM data arrays.");
-
+  SuperPCM.NullTest = function (pcm1, pcm2, format, async = false) {
+    format = format || {};
+  
+    var isAsync = !!async;
+    var asyncFrameSize = async != null && typeof async == "object" && async.frameSize != null
+      ? async.frameSize
+      : SuperPCM.asyncFrameSize;
+  
     var bitDepth = format.bitDepth || SuperPCM.defaults.bitDepth;
     var isFloat = !!format.float;
     var channels = format.channels || SuperPCM.defaults.channels;
-
+  
     var bytes1 = pcm1 instanceof Uint8Array ? pcm1 : new Uint8Array(pcm1);
     var bytes2 = pcm2 instanceof Uint8Array ? pcm2 : new Uint8Array(pcm2);
-
-    var bps = getBytesPerSample(bitDepth, isFloat);
-    var frameSize = bps * channels;
-    
-    // Find the minimum frame count to prevent out-of-bounds memory access
+  
+    var bytesPerSample = getBytesPerSample(bitDepth, isFloat);
+    var frameSize = bytesPerSample * channels;
+  
     var totalFrames = Math.min(
       Math.floor(bytes1.length / frameSize),
       Math.floor(bytes2.length / frameSize)
     );
+  
     var totalSamples = totalFrames * channels;
-
+  
     var dv1 = new DataView(bytes1.buffer, bytes1.byteOffset, bytes1.byteLength);
     var dv2 = new DataView(bytes2.buffer, bytes2.byteOffset, bytes2.byteLength);
-
-    // Float32 array to store precise differential values (-2.0 to 2.0 max range)
+  
     var deltaFloat = new Float32Array(totalSamples);
-    
-    var maxDelta = 0;
-    var sumSquareError = 0;
-    var idx = 0;
-
-    for (var f = 0; f < totalFrames; f++) {
-      for (var c = 0; c < channels; c++) {
-        var byteOffset = f * frameSize + c * bps;
-
-        // Fetch linear amplitude values (-1.0 to 1.0) using native converters
-        var s1 = getSample(bytes1, dv1, byteOffset, bitDepth, isFloat);
-        var s2 = getSample(bytes2, dv2, byteOffset, bitDepth, isFloat);
-
-        // Perform the mathematical Phase Inversion cancellation (Delta = s1 - s2)
-        var delta = s1 - s2;
-        deltaFloat[idx++] = delta;
-
-        // Track the highest absolute peak of distortion artifacts
-        var absDelta = Math.abs(delta);
-        if (absDelta > maxDelta) maxDelta = absDelta;
-        
-        // Accumulate squared errors for statistical RMS calculation
-        sumSquareError += delta * delta;
-      }
-    }
-
-    // Compute the Root Mean Square (RMS) Error to determine the average noise floor of compression
-    var rmsError = Math.sqrt(sumSquareError / totalSamples);
-
-    // Convert the delta float array back to a playable 16-bit Signed Integer PCM LE buffer
     var deltaPCM = new Uint8Array(totalSamples * 2);
     var dvOut = new DataView(deltaPCM.buffer);
-    for (var i = 0; i < totalSamples; i++) {
-      var v = clamp(deltaFloat[i], -1, 1);
-      var s16 = v < 0 ? Math.round(v * 0x8000) : Math.round(v * 0x7FFF);
-      dvOut.setInt16(i * 2, clamp(s16, -32768, 32767), true);
-    }
-
-    return {
-      deltaPCM: deltaPCM,        // Playable raw 16-bit PCM containing purely compression noise
-      maxDelta: maxDelta,        // Maximum peak error value (0 = identical, 2.0 = completely inverted phase)
-      rmsError: rmsError,        // Total Root Mean Square quantization distortion level
-      totalSamples: totalSamples
+  
+    var maxDelta = 0;
+    var sumSquareError = 0;
+    var sampleIndex = 0;
+  
+    var result = {
+      deltaFloat: deltaFloat,
+      deltaPCM: deltaPCM,
+      maxDelta: 0,
+      rmsError: 0,
+      totalSamples: totalSamples,
+      totalFrames: totalFrames
     };
+  
+    function clean() {
+      dv1 = null;
+      dv2 = null;
+      dvOut = null;
+    }
+  
+    var job = new SuperPCM.AsyncProcessing({
+      async: isAsync,
+      frameSize: asyncFrameSize,
+  
+      process: function (v) {
+        var f = v.index;
+  
+        for (var c = 0; c < channels; c++) {
+          var byteOffset = f * frameSize + c * bytesPerSample;
+  
+          var s1 = getSample(bytes1, dv1, byteOffset, bitDepth, isFloat);
+          var s2 = getSample(bytes2, dv2, byteOffset, bitDepth, isFloat);
+  
+          var delta = s1 - s2;
+  
+          var idx = f * channels + c;
+          deltaFloat[idx] = delta;
+  
+          var absDelta = Math.abs(delta);
+          if (absDelta > maxDelta) maxDelta = absDelta;
+  
+          sumSquareError += delta * delta;
+          sampleIndex++;
+  
+          var v16 = clamp(delta, -1, 1);
+          var s16 = v16 < 0
+            ? Math.round(v16 * 0x8000)
+            : Math.round(v16 * 0x7FFF);
+  
+          dvOut.setInt16(idx * 2, clamp(s16, -32768, 32767), true);
+        }
+  
+        result.maxDelta = maxDelta;
+        result.rmsError = sampleIndex > 0
+          ? Math.sqrt(sumSquareError / sampleIndex)
+          : 0;
+      }
+    });
+  
+    job.initial({
+      index: 0,
+      total: totalFrames
+    });
+  
+    if (isAsync) {
+      return {
+        process: function (callback) {
+          return job.processing(function (e) {
+            if (e.done || e.stopped) clean();
+  
+            if (typeof callback == "function") {
+              callback({
+                done: e.done,
+                stopped: e.stopped,
+                paused: e.paused,
+                result: result,
+                deltaPCM: deltaPCM,
+                deltaFloat: deltaFloat,
+                total: totalFrames,
+                length: e.vars.index,
+                job: job
+              });
+            }
+          });
+        },
+  
+        stop: function () {
+          return job.stop();
+        },
+  
+        pause: function () {
+          return job.pause();
+        },
+  
+        resume: function (callback) {
+          return job.resume(callback);
+        },
+  
+        status: function () {
+          return job.status();
+        },
+  
+        job: job,
+        result: result
+      };
+    }
+  
+    job.processing();
+    clean();
+  
+    return result;
   };
 
   /* ------------------------------------------------------------------

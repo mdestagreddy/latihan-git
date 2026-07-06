@@ -25,6 +25,9 @@
             player.gapless = false;
             player.normalizedGain = false;
 
+            var amp = new SuperPCM.Amplitudo();
+            amp.interpolationMode = "kaiser";
+
             var info = document.querySelector("#info"),
             source = document.querySelector("#source"),
             metadata = document.querySelector("#metadata"),
@@ -53,15 +56,24 @@
 
             player.onloadedmetadata = function(result) {
                 metadata.innerHTML = "";
-                var hmtd = document.createElement("h2");
-                hmtd.textContent = "Metadata";
-                metadata.appendChild(hmtd);
 
-                for (var v in result) {
-                    var mtd = document.createElement("div");
-                    mtd.innerHTML = `<b>${v}:</b> ${typeof result[v] == "object" ? JSON.stringify(result[v]) : result[v]}`;
-                    metadata.appendChild(mtd);
-                }
+                amp.pcmData = player.pcmData;
+                amp.sampleRate = player.sampleRate;
+                amp.resample({ sampleRate: 8000 }).process(function(event) {
+                    player.originalSampleRate = 8000;
+                    if (event.done) {
+                        metadata.innerHTML = "";
+                        var hmtd = document.createElement("h2");
+                        hmtd.textContent = "Metadata";
+                        metadata.appendChild(hmtd);
+                        for (var v in result) {
+                            var mtd = document.createElement("div");
+                            mtd.innerHTML = `<b>${v}:</b> ${typeof result[v] == "object" ? JSON.stringify(result[v]) : result[v]}`;
+                            metadata.appendChild(mtd);
+                        }
+                        player.pcmData = event.pcm;
+                    } else metadata.innerHTML = `Resampling... ${(event.length / event.total * 100).toFixed(2)}%`;
+                });
             }
             player.ontimeupdate = function() {
                 updateInfo();
