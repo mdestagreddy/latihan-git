@@ -12,6 +12,7 @@ connectionPool.getConnection(err => {
     if (err) throw err;
 });
 
+// Database Movie
 const createMovie = (req, res) => {
     let {title, year} = req.body;
     let queryText = `INSERT INTO movies (title, year) VALUES ('${title}', ${year})`;
@@ -111,6 +112,13 @@ const readMovies = (req, res) => {
             code: 200
         });
     });
+}
+
+// Database User
+const bcrypt = require('bcrypt');
+
+const registerUser = (req, res) => {
+
 }
 
 module.exports = {
