@@ -1,6 +1,6 @@
 const { connectionPool, createMovie, updateMovie, deleteMovie, readMovies } = require("../config/database")
-const { updateToken, getToken, localhostPort } = require('./runner')
 
+const localhostPort = Number(process.env.PORT) || 3000;
 const BASE_URL = `http://localhost:${localhostPort}`;
 
 function buildMovieQuery(query, targetQuery = {}) {
@@ -10,10 +10,6 @@ function buildMovieQuery(query, targetQuery = {}) {
     let queryValue;
 
     Object.keys(query || {}).forEach((q) => {
-        if (q === "token" || q === "devMode") {
-            return;
-        }
-
         const rawValue = query[q];
         if (rawValue === undefined || rawValue === null || rawValue === "") {
             return;
@@ -37,11 +33,14 @@ function buildMovieQuery(query, targetQuery = {}) {
 
 const getMovies = async (req, res) => {
     let result = "";
-    const token = getToken();
     const queryString = new URLSearchParams(Object.keys(req.params).length != 0 ? req.params : req.query).toString();
+    const authHeader = req.headers.authorization;
+    const headers = authHeader ? { Authorization: authHeader } : {};
     
     try {
-        let response = await fetch(`${BASE_URL}/movie/api/get?token=${token}${queryString ? `&${queryString}` : ''}`);
+        let response = await fetch(`${BASE_URL}/movie/api/get${queryString ? `?${queryString}` : ''}`, {
+            headers,
+        });
         let json = await response.json();
 
         if (json.items) {
@@ -73,12 +72,8 @@ const getMovies = async (req, res) => {
     }
 }
 
-updateToken();
-
 module.exports = {
     getMovies,
-    updateToken,
-    getToken,
     localhostPort,
     
     createMovie,

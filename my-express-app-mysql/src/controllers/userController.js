@@ -1,35 +1,31 @@
 const bcrypt = require('bcrypt')
+const jwt = require('jsonwebtoken')
 const {connectionPool} = require('../config/database')
 
-const userCheck = (email, name, password) => {
+const userCheck = (email, password) => {
     return new Promise((resolve, reject) => {
-        const queryText = 'SELECT * FROM db_movies2.user WHERE email = ? AND name = ?';
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
-        connectionPool.query(queryText, [email, name], (err, data) => {
+        const queryText = 'SELECT * FROM db_movies2.user WHERE email = ?';
+
+        connectionPool.query(queryText, [email], (err, data) => {
             if (err) {
                 console.error(err);
-                res.status(500).json({
-                    success: false,
-                    message: `Gagal memeriksa user: [${err.code}] ${err.sqlMessage}`,
-                    code: 500
-                });  
                 reject(err);
 
                 return;
             }
-            if (!Array.isArray(data) || data.length === 0) return resolve(false);
-            if (!password) return resolve(true);
 
             const user = data[0];
+            const output = (success) => {
+                resolve({ success, data: user })
+            }
+
+            if (!Array.isArray(data) || data.length === 0) return output(false);
+            if (!password) return output(true);
+
             bcrypt.compare(password, user.pass)
-                .then(resolve)
+                .then(output)
                 .catch(err => {
                     console.error(err);
-                    res.status(500).json({
-                        success: false,
-                        message: `Gagal memeriksa password: ${JSON.stringify(err)}`,
-                        code: 500
-                    });  
                     reject(err);
                 });
         });
@@ -48,8 +44,8 @@ const register = async (req, res) => {
         return;
     }
 
-    const check = await userCheck(email, name);
-    if (check) {
+    const check = await userCheck(email, password);
+    if (check.success) {
         res.status(409).json({
             success: false,
             message: `User Anda sudah terdaftar: ${name}`,
@@ -83,31 +79,32 @@ const register = async (req, res) => {
 }
 
 const login = async (req, res) => {
-    const {email, name, password} = req.body;
+    const { email, password } = req.body;
 
-    if (!email || !name || !password) {
+    if (!email || !password) {
         res.status(400).json({
             success: false,
-            message: "Silahkan isi data user terlebih dahulu",
+            message: "Silahkan isi email dan password terlebih dahulu",
             code: 400
         });
 
         return;
     }
 
-    const check = await userCheck(email, name, password);
+    const check = await userCheck(email, password);
 
-    if (check) {
+    if (check.success) {
+        const accessToken = jwt.sign({ email: check.data.email, name: check.data.name }, process.env.JWT_SECRET)
         res.status(200).json({
             success: true,
-            message: "User berhasil login",
-            auth: "test",
+            accessToken,
             code: 200
         });
+        console.log(accessToken);
     } else {
         res.status(401).json({
             success: false,
-            message: "Data akun yang Anda dimasukkan salah atau tidak ditemukan",
+            message: "User tidak valid",
             code: 401
         });
     }

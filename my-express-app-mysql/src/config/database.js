@@ -1,5 +1,4 @@
 const mysql = require("mysql");
-require('dotenv').config()
 
 const connectionPool = mysql.createPool({
     host: process.env.DB_HOST,
@@ -97,10 +96,6 @@ const buildMovieQuery = (query = {}, targetQuery = {}) => {
     let queryValue;
 
     Object.entries(query || {}).forEach(([key, rawValue]) => {
-        if (key === "token" || key === "devMode") {
-            return;
-        }
-
         if (rawValue === undefined || rawValue === null || rawValue === "") {
             return;
         }

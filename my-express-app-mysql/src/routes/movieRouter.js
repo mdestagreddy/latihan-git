@@ -1,6 +1,6 @@
 const express = require('express')
 const movieRouter = express.Router()
-const { timingMiddleware, loggerMiddleware, tokenMiddleware, updateToken, getToken } = require('../controllers/runner')
+const { timingMiddleware, loggerMiddleware, authentication } = require('../middleware')
 
 const {
     getMovies,
@@ -15,18 +15,18 @@ const {
 movieRouter.use(loggerMiddleware, timingMiddleware);
 movieRouter.get('/search', getMovies)
 movieRouter.get('/search/:id', getMovies)
-movieRouter.get('/api/get', tokenMiddleware, readMovies)
-movieRouter.get('/api/get/:id', tokenMiddleware, readMovies)
+movieRouter.get('/api/get', authentication, readMovies)
+movieRouter.get('/api/get/:id', authentication, readMovies)
 
 // POST
-movieRouter.post('/api/post', tokenMiddleware, createMovie)
-movieRouter.post('/api/update', tokenMiddleware, updateMovie)
-movieRouter.post('/api/delete', tokenMiddleware, deleteMovie)
+movieRouter.post('/api/post', authentication, createMovie)
+movieRouter.post('/api/update', authentication, updateMovie)
+movieRouter.post('/api/delete', authentication, deleteMovie)
 
 // PUT
-movieRouter.put('/api/update', tokenMiddleware, updateMovie)
+movieRouter.put('/api/update', authentication, updateMovie)
 
 // DELETE
-movieRouter.delete('/api/delete', tokenMiddleware, deleteMovie)
+movieRouter.delete('/api/delete', authentication, deleteMovie)
 
-module.exports = { movieRouter, updateToken, getToken }
+module.exports = { movieRouter }
