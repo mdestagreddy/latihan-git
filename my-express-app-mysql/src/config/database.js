@@ -12,17 +12,16 @@ connectionPool.getConnection(err => {
     if (err) throw err;
 });
 
-// Database Movie
 const createMovie = (req, res) => {
     let {title, year} = req.body;
     let queryText = `INSERT INTO movies (title, year) VALUES ('${title}', ${year})`;
     connectionPool.query(queryText, err => {
         if (err) {
             console.error(err);
-            res.status(400).json({
+            res.status(500).json({
                 success: false,
                 message: `Gagal membuat data: [${err.code}] ${err.sqlMessage}`,
-                code: 400
+                code: 500
             });
 
             return;
@@ -43,10 +42,10 @@ const updateMovie = (req, res) => {
     connectionPool.query(queryText, err => {
         if (err) {
             console.error(err);
-            res.status(400).json({
+            res.status(500).json({
                 success: false,
                 message: `Gagal memperbarui data: [${err.code}] ${err.sqlMessage}`,
-                code: 400
+                code: 500
             });
 
             return;
@@ -74,10 +73,10 @@ const deleteMovie = (req, res) => {
     connectionPool.query(queryText, err => {
         if (err) {
             console.error(err);
-            res.status(400).json({
+            res.status(500).json({
                 success: false,
                 message: `Gagal menghapus data: [${err.code}] ${err.sqlMessage}`,
-                code: 400
+                code: 500
             });
 
             return;
@@ -91,16 +90,65 @@ const deleteMovie = (req, res) => {
     })
 }
 
-const readMovies = (req, res) => {
-    let queryText = "SELECT * FROM db_movies2.movies";
+const buildMovieQuery = (query = {}, targetQuery = {}) => {
+    const conditions = [];
+    const values = [];
+    let queryDetected;
+    let queryValue;
 
-    connectionPool.query(queryText, (err, data) => {
+    Object.entries(query || {}).forEach(([key, rawValue]) => {
+        if (key === "token" || key === "devMode") {
+            return;
+        }
+
+        if (rawValue === undefined || rawValue === null || rawValue === "") {
+            return;
+        }
+
+        const column = targetQuery[key] || key;
+        queryDetected = key;
+        queryValue = rawValue;
+
+        if ((column === "id" || column === "year") && !Number.isNaN(Number(rawValue))) {
+            conditions.push(`${column} = ?`);
+            values.push(Number(rawValue));
+        } else {
+            conditions.push(`${column} LIKE ?`);
+            values.push(`%${rawValue}%`);
+        }
+    });
+
+    return { conditions, values, queryDetected, queryValue };
+};
+
+const readMovies = (req, res) => {
+    const queryInput = Object.keys(req.params || {}).length !== 0 ? { ...req.query, ...req.params } : req.query || {};
+    const { conditions, values, queryDetected, queryValue } = buildMovieQuery(queryInput, { keyword: "title" });
+
+    let queryText = "SELECT * FROM db_movies2.movies";
+    if (conditions.length > 0) {
+        queryText += ` WHERE ${conditions.join(" AND ")}`;
+    }
+
+    connectionPool.query(queryText, values, (err, data) => {
         if (err) {
             console.error(err);
-            res.status(404).json({
+            res.status(500).json({
                 success: false,
                 message: `Gagal mendapatkan data: [${err.code}] ${err.sqlMessage}`,
-                code: 404
+                code: 500
+            });
+
+            return;
+        }
+
+        if (data.length === 0) {
+            res.status(404).json({
+                success: false,
+                code: 404,
+                error: `Data tidak ditemukan untuk pencarian ${queryDetected || "all"}: ${queryValue || ""}`,
+                queryDetected: queryDetected || "all",
+                queryValue
             });
 
             return;
@@ -109,16 +157,11 @@ const readMovies = (req, res) => {
         res.status(200).json({
             items: data,
             success: true,
-            code: 200
+            code: 200,
+            queryDetected: queryDetected || "all",
+            queryValue
         });
     });
-}
-
-// Database User
-const bcrypt = require('bcrypt');
-
-const registerUser = (req, res) => {
-
 }
 
 module.exports = {
