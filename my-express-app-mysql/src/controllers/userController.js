@@ -100,7 +100,6 @@ const login = async (req, res) => {
             accessToken,
             code: 200
         });
-        console.log(accessToken);
     } else {
         res.status(401).json({
             success: false,

@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Movie API Dashboard</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+
+<body>
+    <header>
+        <div class="header-name">By mdestagreddy</div>
+        <div class="user-buttons">
+            <button class="register">Daftar</button>
+            <button class="login">Login</button>
+        </div>
+    </header>
+    <div class="container">
+        <h1>Movie API Dashboard</h1>
+        <p>Kelola dan cari data film Anda.</p>
+
+        <div class="grid">
+            <div class="card">
+                <h2>Cari Film</h2>
+                <form action="/movie/search">
+                    <input name="keyword" type="search" placeholder="Kata kunci" />
+                    <button type="submit">Cari</button>
+                </form>
+                <form action="/movie/search">
+                    <input name="id" type="number" placeholder="ID film" />
+                    <button type="submit">Cari ID</button>
+                </form>
+                <form action="/movie/api/get">
+                    <input name="keyword" type="search" placeholder="Cari melalui JSON" />
+                    <button type="submit">Cari JSON</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h2>Buat Film</h2>
+                <form action="/movie/api/post" method="POST">
+                    <input name="title" type="text" placeholder="Judul" />
+                    <input name="year" type="number" placeholder="Tahun" />
+                    <button type="submit">Buat</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h2>Update Film</h2>
+                <form action="/movie/api/update" method="POST">
+                    <input name="id" type="number" placeholder="ID" />
+                    <input name="title" type="text" placeholder="Judul baru" />
+                    <input name="year" type="number" placeholder="Tahun baru" />
+                    <button type="submit">Perbarui</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h2>Hapus Film</h2>
+                <form action="/movie/api/delete" method="POST">
+                    <input name="id" type="number" placeholder="ID film" />
+                    <button type="submit">Hapus</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script async>
+
+    </script>
+</body>
+</html>

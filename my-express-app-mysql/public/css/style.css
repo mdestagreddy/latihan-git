@@ -1,0 +1,116 @@
+* {
+    font-family: "Montserrat", sans-serif;
+    font-optical-sizing: auto;
+}
+
+header {
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+
+    &>.header-name {
+        font-weight: 600;
+        font-size: 16px;
+    }
+
+    &>.user-buttons {
+        margin-left: auto;
+        display: flex;
+        gap: 12px;
+
+        &>.login {
+            font-weight: 600;
+        }
+
+        &>.register {
+            background-color: white;
+            color: #374151;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+
+            &:hover {
+                background:     #f3f3f3;
+            }
+        }
+
+        &.hidden {
+            display: none;
+        }
+    }
+}
+
+body {
+    margin: 0;
+    padding: 24px;
+    background: linear-gradient(135deg, #f5f7ff, #eef2ff);
+    color: #1f2937;
+}
+
+.container {
+    max-width: 960px;
+    margin: 0 auto;
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+    padding: 24px;
+}
+
+h1 {
+    margin-top: 0;
+    color: #4338ca;
+}
+
+p {
+    color: #6b7280;
+}
+
+.grid {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.card {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 16px;
+    background: #fafafa;
+}
+
+.card h2 {
+    margin-top: 0;
+    font-size: 18px;
+    color: #374151;
+}
+
+form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+input {
+    padding: 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+}
+
+button,
+input[type="submit"] {
+    background: #4338ca;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+}
+
+button:hover,
+input[type="submit"]:hover {
+    background: #3730a3;
+}
+
+.muted {
+    font-size: 13px;
+    color: #6b7280;
+}

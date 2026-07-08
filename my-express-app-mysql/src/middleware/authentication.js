@@ -1,10 +1,11 @@
 const jwt = require('jsonwebtoken')
 
 const authentication = (req, res, next) => {
+    const schemeName = 'Bearer';
     const authHeader = req.header('Authorization');
 
     const sendUnauthorized = (message = 'User tidak diautentikasi') => {
-        res.setHeader('WWW-Authenticate', 'Bearer');
+        res.setHeader('WWW-Authenticate', schemeName);
         return res.status(401).json({
             success: false,
             message,
@@ -16,9 +17,14 @@ const authentication = (req, res, next) => {
         return sendUnauthorized('Anda belum login');
     }
 
-    const [scheme, token] = authHeader.split(' ');
+    const tokenSplit = authHeader.split(' ');
+    let scheme = schemeName;
+    let token = null;
+    if (tokenSplit.length >= 2) {
+        [scheme, token] = tokenSplit;
+    } else token = tokenSplit[0];
 
-    if (scheme !== 'Bearer' || !token) {
+    if (scheme !== schemeName || !token) {
         return sendUnauthorized('Format token tidak valid');
     }
 
