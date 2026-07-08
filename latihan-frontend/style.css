@@ -1,0 +1,170 @@
+@import url("https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap");
+
+* {
+    font-family: 'Montserrat', sans-serif;
+}
+
+body {
+    margin: 0px;
+    padding: 24px;
+    background-color: #eee;
+}
+
+@media (min-width: 1280px) {
+    body {
+        max-width: 1280px;
+        margin: 0 auto;
+    }
+}
+
+header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 16px;
+
+    &>.header-name {
+        font-size: 18px;
+        font-weight: bold;
+    }
+}
+
+article {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+input {
+    box-sizing: border-box;
+    background-color: transparent;
+    outline: 0px transparent;
+    border: 1px solid #aaa;
+    border-radius: 8px;
+    display: block;
+    width: 100%;
+    padding: 12px;
+    font-size: 16px;
+}
+
+input[type="submit"],
+input[type="reset"] {
+    color: white;
+    background-color: hsl(207, 100%, 54%);
+    border: 0px transparent;
+    cursor: pointer;
+    width: auto;
+    min-width: 120px;
+}
+
+input[type="reset"] {
+    background-color: #6c757d;
+}
+
+.form-style {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.form-label {
+    font-size: 24px;
+    font-weight: bold;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.form-group label {
+    font-weight: 600;
+    color: #333;
+}
+
+.form-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 4px;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    overflow: hidden;
+    border-radius: 10px;
+}
+
+th,
+td {
+    border: 1px solid #d9e2ec;
+    padding: 12px 14px;
+    text-align: left;
+}
+
+thead th {
+    background-color: #f3f6f9;
+    color: #2f3b4b;
+    font-weight: 700;
+}
+
+tbody tr:nth-child(even) {
+    background-color: #fafafa;
+}
+
+tbody tr:hover {
+    background-color: #eef6ff;
+}
+
+a {
+    color: #999;
+}
+
+.card {
+    background-color: white;
+    box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.15);
+    padding: 16px;
+    border-radius: 16px;
+    color: #444;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    &>.tag-info {
+        text-align: center;
+        font-size: 24px;
+        font-weight: bold;
+        color: #333;
+    }
+
+    & input {
+        width: 100%;
+    }
+
+    & label {
+        display: inline-block;
+    }
+}
+
+.image-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+}
+
+.image-preview {
+    width: min(100%, 240px);
+    border-radius: 10px;
+    object-fit: cover;
+}
+
+.image-link {
+    color: #1a73e8;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.image-link:hover {
+    text-decoration: underline;
+}
