@@ -2952,7 +2952,7 @@
       } else if (_this.src instanceof Uint8Array) {
         response = (_this.src.byteOffset === 0 && _this.src.byteLength === _this.src.buffer.byteLength)
           ? _this.src.buffer
-          : _this.src.buffer.slice(_this.src.byteOffset, _this.src.byteOffset + _this.src.byteLength);
+          : _this.src.buffer.subarray(_this.src.byteOffset, _this.src.byteOffset + _this.src.byteLength);
         processPCM();
       } else if (typeof _this.src === "string") {
         response = xhr.response;
@@ -3997,7 +3997,7 @@
         }
 
         var end = Math.min(offset + frameByteSize, pcmData.length);
-        var chunk = pcmData.slice(offset, end);
+        var chunk = pcmData.subarray(offset, end);
 
         // Separate L/R channels manually to stay memory-safe
         var decoded = decodeInterleavedToArrays(chunk, format);
@@ -5464,7 +5464,7 @@
 
         var exactFrameOffset = Math.floor(recordedOffset / frameSize) * frameSize;
         if (exactFrameOffset < bytes.length) {
-          bytes = bytes.slice(0, exactFrameOffset);
+          bytes = bytes.subarray(0, exactFrameOffset);
           length = Math.floor(recordedOffset / frameSize);
         }
 
@@ -5510,7 +5510,7 @@
       dv = null;
       this.initialize();
       if (bytes.length == prevBytes.length) bytes = prevBytes;
-      else if (prevBytes.length > bytes.length) bytes = prevBytes.slice(0, bytes.length);
+      else if (prevBytes.length > bytes.length) bytes = prevBytes.subarray(0, bytes.length);
       else if (prevBytes.length < bytes.length) bytes = concatUint8Arrays([prevBytes, new Uint8Array(bytes.length - prevBytes.length)]);
       dv = new DataView(bytes.buffer);
       length = Math.floor(bytes.length / frameSize);
@@ -5599,7 +5599,7 @@
     }
 
     return {
-      pcm: pcmBytes.slice(startFrame * frameSize, endFrame * frameSize),
+      pcm: pcmBytes.subarray(startFrame * frameSize, endFrame * frameSize),
       startFrame: startFrame,
       endFrame: endFrame
     };
@@ -6220,7 +6220,7 @@
 
       var sampleStartByte = sampleStart * frameSize;
       var sampleEndByte = sampleEnd * frameSize;
-      return pcm.slice(sampleStartByte, sampleEndByte);
+      return pcm.subarray(sampleStartByte, sampleEndByte);
     }
   };
 

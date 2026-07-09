@@ -1,2 +1,129 @@
-<h1>INI HALAMAN PROFIL</h1>
-<a href="index.html">Kembali ke halaman utama</a>
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Profile</title>
+    <link rel="stylesheet" href="style.css">
+
+    <script src="../eksperimen/SuperPCM.js"></script>
+</head>
+<body>
+    <header>
+        <div class="header-name">PROFILE</div>
+    </header>
+    <article>
+        <div class="card">
+            <div class="tag-info">INI HALAMAN PROFIL</div>
+            <div class="card-content">
+                <a href="index.html">Kembali ke halaman utama</a>
+            </div>
+        </div>
+        <div class="card">
+            <div class="tag-info">MUSIK</div>
+            <div class="card-content gap">
+                <input type="url" id="source"
+                    value="file:///C:/latihan-git/eksperimen/MUSIC%20RHYTHM%20EDISI%20JULI'23_cut.wav" />
+                <div id="info">Time: 0s<br>Duration: 0s</div>
+                <div id="metadata" style="font-size: 12px"></div>
+                <input style="width: 100%" type="range" id="seek" min="0" max="0" step="0.000000001" />
+
+                <input type="number" id="speed" value="1" />
+                <input type="number" id="volume" value="1" />
+                <button onclick="player.play()">Play</button>
+                <button onclick="player.pause()">Pause</button>
+                <script>
+                    SuperPCM.runOnBackground = true;
+
+                    var player = new SuperPCM.player();
+                    player.loop = true;
+                    player.bufferSize = 4096;
+                    player.gapless = false;
+                    player.normalizedGain = false;
+
+                    var amp = new SuperPCM.Amplitudo();
+                    amp.interpolationMode = "kaiser";
+
+                    var info = document.querySelector("#info"),
+                        source = document.querySelector("#source"),
+                        metadata = document.querySelector("#metadata"),
+                        seek = document.querySelector("#seek"),
+                        speed = document.querySelector("#speed"),
+                        volume = document.querySelector("#volume");
+                    source.onchange = function () {
+                        player.src = source.value;
+                    }
+                    seek.oninput = function () {
+                        player.currentTime = seek.value;
+                    }
+                    speed.oninput = function () {
+                        player.playbackRate = speed.value;
+                    }
+                    volume.oninput = function () {
+                        player.volume = volume.value;
+                    }
+
+                    function updateInfo() {
+                        info.innerText = `Time: ${player.currentTime.toFixed(2)}s / ${player.duration.toFixed(2)}s
+                Offset: ${player.currentSample.toFixed(0)} / ${player.totalSamples.toFixed(0)}
+                Speed: ${player.playbackRate}x
+                Volume: ${player.volume * 100}%`;
+                    }
+
+                    function clearMetadata() {
+                        while (metadata.firstChild) {
+                            metadata.removeChild(metadata.firstChild);
+                        }
+                    }
+
+                    player.onloadedmetadata = function (result) {
+                        clearMetadata();
+
+                        amp.pcmData = player.pcmData;
+                        amp.sampleRate = player.sampleRate;
+                        amp.resample({ sampleRate: 44100, asyncFrameSize: 24000 }).process(function (event) {
+                            player.originalSampleRate = 44100;
+                            if (event.done) {
+                                clearMetadata();
+                                var hmtd = document.createElement("h2");
+                                hmtd.textContent = "Metadata";
+                                metadata.appendChild(hmtd);
+                                for (var v in result) {
+                                    var mtd = document.createElement("div");
+                                    var label = document.createElement("b");
+                                    label.textContent = v + ":";
+                                    mtd.appendChild(label);
+                                    mtd.appendChild(document.createTextNode(" " + (typeof result[v] == "object" ? JSON.stringify(result[v]) : result[v])));
+                                    metadata.appendChild(mtd);
+                                }
+                                player.pcmData = event.pcm;
+                            } else {
+                                clearMetadata();
+                                var status = document.createElement("div");
+                                status.textContent = `Resampling... ${(event.length / event.total * 100).toFixed(2)}% (${event.length} / ${event.total})`;
+                                var progress = document.createElement("progress");
+                                progress.value = event.length / event.total * 100;
+                                progress.max = 100;
+                                progress.style.width = "100%";
+                                progress.style.height = "24px";
+                                metadata.appendChild(status);
+                                metadata.appendChild(progress);
+                            }
+                        });
+                    }
+                    player.ontimeupdate = function () {
+                        updateInfo();
+
+                        seek.max = player.duration;
+                        seek.value = player.currentTime;
+                    }
+                    player.onpcmdatachange = updateInfo;
+
+                    player.src = source.value;
+                </script>
+
+            </div>
+        </div>
+    </article>
+</body>
+</html>

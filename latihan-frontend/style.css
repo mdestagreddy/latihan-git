@@ -1,26 +1,28 @@
-@import url("https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap");
-
+@import url('../Canva Sans/canva.css');
 * {
-    font-family: 'Montserrat', sans-serif;
+    font-family: 'Canva Sans', sans-serif;
 }
 
 body {
     margin: 0px;
     padding: 24px;
     background-color: #eee;
-}
-
-@media (min-width: 1280px) {
-    body {
-        max-width: 1280px;
-        margin: 0 auto;
-    }
+    padding-top: calc(64px + 16px);
 }
 
 header {
     display: flex;
     align-items: center;
-    margin-bottom: 16px;
+    padding: 0px 24px;
+    height: 64px;
+    background-color: rgba(238, 238, 238, 0.25);
+    position: fixed;
+    top: 0px;
+    left: 0px;
+    z-index: 10;
+    backdrop-filter: blur(8px);
+    width: 100%;
+    border-radius: 0px 10px 10px 0px;
 
     &>.header-name {
         font-size: 18px;
@@ -29,12 +31,14 @@ header {
 }
 
 article {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
     gap: 16px;
+    width: 100%;
+    justify-content: start;
 }
 
-input {
+input, button {
     box-sizing: border-box;
     background-color: transparent;
     outline: 0px transparent;
@@ -44,6 +48,12 @@ input {
     width: 100%;
     padding: 12px;
     font-size: 16px;
+}
+button {
+    border: 0px solid transparent;
+    background-color:hsl(207, 100%, 54%);
+    color: white;
+    font-weight: bold;
 }
 
 input[type="submit"],
@@ -120,6 +130,12 @@ a {
     color: #999;
 }
 
+iframe {
+    border: 0px solid transparent;
+    outline: 0px solid transparent;
+    border-radius: 10px;
+}
+
 .card {
     background-color: white;
     box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.15);
@@ -128,7 +144,8 @@ a {
     color: #444;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 16px;
+    position: relative;
 
     &>.tag-info {
         text-align: center;
@@ -144,6 +161,34 @@ a {
     & label {
         display: inline-block;
     }
+
+    &> .card-content {
+        display: flex;
+        flex-direction: column;
+        position: relative;
+        overflow: hidden;
+        border-radius: 8px;
+
+        &.row {
+            flex-direction: row;
+
+            gap: 16px;
+        }
+
+        &.scrollable {
+            max-height: 480px;
+            overflow: auto;
+        }
+
+        &.gap {
+            gap: 8px;
+        }
+    }
+}
+
+img {
+    width: 25%;
+    border-radius: 10px;
 }
 
 .image-wrapper {
@@ -155,7 +200,6 @@ a {
 
 .image-preview {
     width: min(100%, 240px);
-    border-radius: 10px;
     object-fit: cover;
 }
 
@@ -167,4 +211,17 @@ a {
 
 .image-link:hover {
     text-decoration: underline;
+}
+
+@media only screen and (max-width: 720px) {
+    article {
+        display: flex;
+        flex-direction: column;
+    }
+}
+@media only screen and (min-width: 1280px) {
+    body {
+        max-width: 1280px;
+        margin: 0 auto;
+    }
 }

@@ -5,9 +5,177 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Home</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="canva.css">
+
+    <style>
+        .p2 {
+            border: 2px solid black;
+            background-color: red;
+            padding: 10px 8px 6px 12px;
+            margin: 4px 16px;
+            color: white;
+        }
+
+
+        .div-container {
+            width: 240px;
+            height: 240px;
+            border: 16px solid rgba(255, 0, 0, 0.5);
+        }
+
+        .div1,
+        .div2,
+        .div3,
+        .div4 {
+            padding: 8px;
+
+            width: 64px;
+            height: 64px;
+        }
+
+        .div1 {
+            background-color: red;
+            position: static;
+        }
+
+        .div2 {
+            background-color: green;
+            position: relative;
+            top: -16px;
+            left: 16px;
+        }
+
+        .div3 {
+            background-color: blue;
+            position: absolute;
+            top: 32px;
+            left: 32px;
+        }
+
+        .div4 {
+            background-color: blueviolet;
+            position: fixed;
+            top: 16px;
+            left: 16px;
+        }
+
+
+        nav.container {
+            display: flex;
+            border: 1px solid red;
+            justify-content: space-around;
+            align-items: center;
+
+            height: 200px;
+
+            &>* {
+                border: 1px solid red;
+                padding: 10px;
+
+                &:hover {
+                    background-color: red;
+                }
+
+                &:active {
+                    padding: 20px;
+                }
+
+                &:visited {
+                    color: green;
+                }
+            }
+        }
+
+
+        .animasi {
+            width: 100px;
+            height: 100px;
+            background-color: black;
+            animation: anim 5s;
+        }
+
+        @keyframes anim {
+            0% {
+                background-color: black;
+            }
+
+            50% {
+                background-color: green;
+            }
+
+            100% {
+                background-color: blue;
+            }
+        }
+
+        .animasi-progressbar {
+            animation: anim-progressbar linear 10s;
+            background-color: green;
+            color: white;
+            display: block;
+        }
+
+        @keyframes anim-progressbar {
+            0% {
+                width: 0%;
+                background-color: red;
+            }
+
+            50% {
+                width: 50%;
+                background-color: yellow;
+            }
+
+            100% {
+                width: 100%;
+                background-color: green;
+            }
+        }
+
+
+        .em {
+            font-size: 1.5em;
+        }
+
+        .rem {
+            font-size: 1rem;
+        }
+
+
+        .responsive {
+            background-color: grey;
+            padding: 16px;
+        }
+
+        @media only screen and (max-width: 720px) {
+            .responsive {
+                background-color: cyan;
+            }
+        }
+
+        @media only screen and (min-width: 960px) {
+            .responsive {
+                background-color: blue;
+                color: white;
+            }
+        }
+
+
+        .grid-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            column-gap: 50px;
+            row-gap: 50px;
+
+            &>.box {
+                border: 1px solid black;
+                min-height: 100px;
+                width: 100%;
+                min-width: 36px;
+            }
+        }
+    </style>
 </head>
 
 <body>
@@ -17,147 +185,274 @@
     <article>
         <div class="card">
             <div class="tag-info">HEADING</div>
-            <h1>HEADING</h1>
-            <h2>HEADING</h2>
-            <h3>HEADING</h3>
-            <h4>HEADING</h4>
-            <h5>HEADING</h5>
-            <h6>HEADING</h6>
+            <div class="card-content">
+                <h1>HEADING</h1>
+                <h2>HEADING</h2>
+                <h3>HEADING</h3>
+                <h4>HEADING</h4>
+                <h5>HEADING</h5>
+                <h6>HEADING</h6>
+            </div>
         </div>
 
         <div class="card">
             <div class="tag-info">PARAGRAPH</div>
-            <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer finibus arcu mi, quis mattis est viverra
-                at.
-                Class aptent taciti sociosqu ad litora torquent per conubia nostra, per inceptos himenaeos. Maecenas sit
-                amet
-                urna sit amet dolor sagittis varius a non nisl. Nulla consectetur commodo diam ut pellentesque. Sed
-                vehicula
-                pellentesque ornare. Sed dictum arcu et ultrices semper. Maecenas eu tincidunt enim. Maecenas dignissim
-                eros
-                quis turpis luctus, sed commodo justo vehicula. Maecenas maximus diam ut augue hendrerit, nec ornare
-                ipsum
-                eleifend. Fusce pharetra, mi et ultricies sodales, magna mauris volutpat tellus, ut aliquet leo augue a
-                magna.
-                Donec scelerisque nulla dolor, in laoreet ex rutrum a. Aliquam ultrices quam sed tellus luctus, vitae
-                volutpat
-                massa eleifend. Vestibulum dolor sapien, pellentesque at lorem quis, tincidunt mollis ex. Nulla velit
-                erat,
-                fermentum sit amet libero nec, ultrices elementum ipsum. Nulla facilisi.</p>
-            <p>Morbi nibh arcu, consequat id commodo in, vulputate eu purus. Aenean a dui ac lorem laoreet iaculis at id
-                augue.
-                Duis ut vulputate nunc. Morbi sit amet libero porttitor, blandit libero quis, tempus tellus.
-                Pellentesque at ex
-                vitae libero cursus fermentum. Maecenas mollis turpis a dapibus finibus. Aliquam eu pharetra erat. Donec
-                non
-                neque erat. Sed ultricies iaculis blandit. Aenean et felis nec ligula aliquam luctus. Lorem ipsum dolor
-                sit
-                amet, consectetur adipiscing elit. Aenean dapibus neque a lacinia elementum. Nunc semper quam a lorem
-                facilisis
-                blandit. Suspendisse arcu enim, pulvinar nec fringilla quis, dapibus ac purus.</p>
-            <p>Nam elementum ante sit amet elementum condimentum. Pellentesque luctus orci at bibendum consequat. Donec
-                efficitur felis a erat dignissim molestie. Orci varius natoque penatibus et magnis dis parturient
-                montes,
-                nascetur ridiculus mus. Nulla a ipsum in turpis semper efficitur vel eu purus. Interdum et malesuada
-                fames ac
-                ante ipsum primis in faucibus. Maecenas nec tristique libero. Phasellus sit amet efficitur erat.</p>
-            <p>Duis gravida id dolor quis facilisis. In id quam a felis dapibus bibendum in non felis. Donec bibendum
-                elementum
-                lacus ultrices placerat. Donec vel augue id urna condimentum porta. Pellentesque varius sollicitudin
-                dolor, quis
-                vestibulum massa suscipit ut. Nunc in ligula finibus, tincidunt sapien id, egestas arcu. Nulla
-                condimentum enim
-                at feugiat gravida. Quisque turpis sapien, vulputate et justo eget, lobortis placerat est.</p>
-            <p>Integer imperdiet iaculis justo eget luctus. Curabitur pharetra at felis in sagittis. Mauris luctus justo
-                eget
-                pellentesque dignissim. Donec vel magna arcu. Cras tincidunt consectetur risus, quis tempor ligula
-                volutpat nec.
-                Duis efficitur semper augue placerat semper. Aenean sed eleifend lacus, a tempus elit. Nulla imperdiet
-                nunc a
-                congue tincidunt. Curabitur vestibulum laoreet justo. Nunc egestas tristique nisl, in euismod urna
-                pretium ac.
-                Sed dapibus augue at ante interdum commodo. Vivamus consectetur ligula turpis, in iaculis justo congue
-                eget.
-                Vivamus sodales felis sit amet neque ullamcorper molestie. Phasellus pretium diam risus, nec
-                sollicitudin dui
-                rutrum non. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer viverra eros quis malesuada
-                aliquam.</p>
+            <div class="card-content scrollable">
+                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer finibus arcu mi, quis mattis est
+                    viverra
+                    at.
+                    Class aptent taciti sociosqu ad litora torquent per conubia nostra, per inceptos himenaeos. Maecenas
+                    sit
+                    amet
+                    urna sit amet dolor sagittis varius a non nisl. Nulla consectetur commodo diam ut pellentesque. Sed
+                    vehicula
+                    pellentesque ornare. Sed dictum arcu et ultrices semper. Maecenas eu tincidunt enim. Maecenas
+                    dignissim
+                    eros
+                    quis turpis luctus, sed commodo justo vehicula. Maecenas maximus diam ut augue hendrerit, nec ornare
+                    ipsum
+                    eleifend. Fusce pharetra, mi et ultricies sodales, magna mauris volutpat tellus, ut aliquet leo
+                    augue a
+                    magna.
+                    Donec scelerisque nulla dolor, in laoreet ex rutrum a. Aliquam ultrices quam sed tellus luctus,
+                    vitae
+                    volutpat
+                    massa eleifend. Vestibulum dolor sapien, pellentesque at lorem quis, tincidunt mollis ex. Nulla
+                    velit
+                    erat,
+                    fermentum sit amet libero nec, ultrices elementum ipsum. Nulla facilisi.</p>
+                <p>Morbi nibh arcu, consequat id commodo in, vulputate eu purus. Aenean a dui ac lorem laoreet iaculis
+                    at id
+                    augue.
+                    Duis ut vulputate nunc. Morbi sit amet libero porttitor, blandit libero quis, tempus tellus.
+                    Pellentesque at ex
+                    vitae libero cursus fermentum. Maecenas mollis turpis a dapibus finibus. Aliquam eu pharetra erat.
+                    Donec
+                    non
+                    neque erat. Sed ultricies iaculis blandit. Aenean et felis nec ligula aliquam luctus. Lorem ipsum
+                    dolor
+                    sit
+                    amet, consectetur adipiscing elit. Aenean dapibus neque a lacinia elementum. Nunc semper quam a
+                    lorem
+                    facilisis
+                    blandit. Suspendisse arcu enim, pulvinar nec fringilla quis, dapibus ac purus.</p>
+                <p>Nam elementum ante sit amet elementum condimentum. Pellentesque luctus orci at bibendum consequat.
+                    Donec
+                    efficitur felis a erat dignissim molestie. Orci varius natoque penatibus et magnis dis parturient
+                    montes,
+                    nascetur ridiculus mus. Nulla a ipsum in turpis semper efficitur vel eu purus. Interdum et malesuada
+                    fames ac
+                    ante ipsum primis in faucibus. Maecenas nec tristique libero. Phasellus sit amet efficitur erat.</p>
+                <p>Duis gravida id dolor quis facilisis. In id quam a felis dapibus bibendum in non felis. Donec
+                    bibendum
+                    elementum
+                    lacus ultrices placerat. Donec vel augue id urna condimentum porta. Pellentesque varius sollicitudin
+                    dolor, quis
+                    vestibulum massa suscipit ut. Nunc in ligula finibus, tincidunt sapien id, egestas arcu. Nulla
+                    condimentum enim
+                    at feugiat gravida. Quisque turpis sapien, vulputate et justo eget, lobortis placerat est.</p>
+                <p>Integer imperdiet iaculis justo eget luctus. Curabitur pharetra at felis in sagittis. Mauris luctus
+                    justo
+                    eget
+                    pellentesque dignissim. Donec vel magna arcu. Cras tincidunt consectetur risus, quis tempor ligula
+                    volutpat nec.
+                    Duis efficitur semper augue placerat semper. Aenean sed eleifend lacus, a tempus elit. Nulla
+                    imperdiet
+                    nunc a
+                    congue tincidunt. Curabitur vestibulum laoreet justo. Nunc egestas tristique nisl, in euismod urna
+                    pretium ac.
+                    Sed dapibus augue at ante interdum commodo. Vivamus consectetur ligula turpis, in iaculis justo
+                    congue
+                    eget.
+                    Vivamus sodales felis sit amet neque ullamcorper molestie. Phasellus pretium diam risus, nec
+                    sollicitudin dui
+                    rutrum non. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer viverra eros quis
+                    malesuada
+                    aliquam.</p>
+            </div>
         </div>
 
         <div class="card">
             <div class="tag-info">DIV dan IMG</div>
-            <div class="image-wrapper">
-                <img class="image-preview"
-                    src="assets\Lionel_Messi_NE_Revolution_Inter_Miami_7.9.25-055.jpg" alt="Gambar Lionel Messi" />
-                <a class="image-link" href="https://commons.wikimedia.org/wiki/File:Lionel_Messi_NE_Revolution_Inter_Miami_7.9.25-055.jpg">
-                    Sumber Gambar
-                </a>
+            <div class="card-content">
+                <div class="image-wrapper">
+                    <img class="image-preview" src="assets\Lionel_Messi_NE_Revolution_Inter_Miami_7.9.25-055.jpg"
+                        alt="Gambar Lionel Messi" />
+                    <a class="image-link"
+                        href="https://commons.wikimedia.org/wiki/File:Lionel_Messi_NE_Revolution_Inter_Miami_7.9.25-055.jpg">
+                        Sumber Gambar
+                    </a>
+                </div>
             </div>
         </div>
 
         <div class="card">
             <div class="tag-info">ANCHOR</div>
-            <a href="profile.html">Profile</a>
+            <div class="card-content">
+                <a href="profile.html">Profile</a>
+            </div>
         </div>
 
         <div class="card">
             <div class="tag-info">LIST (UNORDERED dan ORDERED)</div>
-            <ul>
-                <li>realme</li>
-                <li>poco</li>
-                <li>infinix</li>
-                <li>samsung</li>
-            </ul>
-            <ol>
-                <li>realme</li>
-                <li>poco</li>
-                <li>infinix</li>
-                <li>samsung</li>
-            </ol>
+            <div class="card-content">
+                <ul>
+                    <li>realme</li>
+                    <li>poco</li>
+                    <li>infinix</li>
+                    <li>samsung</li>
+                </ul>
+                <ol>
+                    <li>realme</li>
+                    <li>poco</li>
+                    <li>infinix</li>
+                    <li>samsung</li>
+                </ol>
+            </div>
         </div>
 
         <div class="card">
             <div class="tag-info">FORM dan INPUT</div>
-            <form class="form-style" method="POST" action="http://localhost:3000/user/api/login">
-                <div class="form-label">Login</div>
-                <div class="form-group">
-                    <label for="email">Email</label>
-                    <input id="email" name="email" type="email" placeholder="Masukkan email" maxLength="100" required />
-                </div>
-                <div class="form-group">
-                    <label for="password">Kata sandi</label>
-                    <input id="password" name="password" type="password" placeholder="Masukkan kata sandi" maxLength="32" required />
-                </div>
-                <div class="form-actions">
-                    <input type="submit" value="Login" />
-                    <input type="reset" value="Bersihkan" />
-                </div>
-            </form>
+            <div class="card-content">
+                <form class="form-style" method="POST" action="http://localhost:3000/user/api/login">
+                    <div class="form-label">Login</div>
+                    <div class="form-group">
+                        <label for="email">Email</label>
+                        <input id="email" name="email" type="email" placeholder="Masukkan email" maxLength="100"
+                            required />
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Kata sandi</label>
+                        <input id="password" name="password" type="password" placeholder="Masukkan kata sandi"
+                            maxLength="32" required />
+                    </div>
+                    <div class="form-actions">
+                        <input type="submit" value="Login" />
+                        <input type="reset" value="Bersihkan" />
+                    </div>
+                </form>
+            </div>
         </div>
 
         <div class="card">
             <div class="tag-info">TABLE</div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>No.</th>
-                        <th>Nama</th>
-                        <th>Tempat lahir</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td>1.</td>
-                        <td>Maria Anders</td>
-                        <td>Germany</td>
-                    </tr>
-                    <tr>
-                        <td>2.</td>
-                        <td>Francisco Chang</td>
-                        <td>Mexico</td>
-                    </tr>
-                </tbody>
-            </table>
+            <div class="card-content">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>No.</th>
+                            <th>Nama</th>
+                            <th>Tempat lahir</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>1.</td>
+                            <td>Maria Anders</td>
+                            <td>Germany</td>
+                        </tr>
+                        <tr>
+                            <td>2.</td>
+                            <td>Francisco Chang</td>
+                            <td>Mexico</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="card">
+            <div class="tag-info">BOX MODEL (BORDER, MARGIN, DAN PADDING)</div>
+            <div class="card-content">
+                <p class="p2">Halo!</p>
+                <p class="p2">Selamat Datang</p>
+            </div>
+        </div>
+        <div class="card">
+            <div class="tag-info">CSS POSITION (STATIC, RELATIVE, ABSOLUTE, dan FIXED)</div>
+            <div class="card-content">
+                <div class="div-container">
+                    <div class="div1">DIV 1</div>
+                    <div class="div2">DIV 2</div>
+                    <div class="div3">DIV 3</div>
+                    <div class="div4">DIV 4</div>
+                </div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="tag-info">CSS DISPLAY (BLOCK dan INLINE)</div>
+            <div class="card-content">
+                <div style="display: inline">
+                    <img src="assets\Lionel_Messi_NE_Revolution_Inter_Miami_7.9.25-055.jpg" />
+                    <img src="assets\Cristiano_Ronaldo_2275_(cropped).jpg" />
+                    <img
+                        src="assets\2016209185719_2016-07-27_Champions_for_Charity_-_Sven_-_1D_X_-_0149_-_DV3P4742_mod.jpg" />
+                </div>
+                <div style="display: block">
+                    <img src="assets\Lionel_Messi_NE_Revolution_Inter_Miami_7.9.25-055.jpg" />
+                    <img src="assets\Cristiano_Ronaldo_2275_(cropped).jpg" />
+                    <img
+                        src="assets\2016209185719_2016-07-27_Champions_for_Charity_-_Sven_-_1D_X_-_0149_-_DV3P4742_mod.jpg" />
+                </div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="tag-info">FLEXBOX</div>
+            <div class="card-content">
+                <nav class="container">
+                    <div>Home</div>
+                    <div>Search</div>
+                    <div>Logout</div>
+                    <a href="profile.html">Profile</a>
+                </nav>
+            </div>
+        </div>
+        <div class="card">
+            <div class="tag-info">KEYFRAME</div>
+            <div class="card-content">
+                <div class="animasi"></div>
+                <div class="animasi-progressbar">Progress</div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="tag-info">RELATIVE UNITS</div>
+            <div class="card-content">
+                <p class="em">Lorem ipsum dolor sit amet consectetur, adipisicing elit. Error vel eum odio iure,
+                    voluptate modi, fuga repellat rerum quo dicta sunt velit voluptatibus molestiae voluptas cum beatae.
+                    Soluta, suscipit ex!</p>
+                <p class="rem">Lorem ipsum dolor sit amet consectetur adipisicing elit. Cumque, iusto optio rem sunt
+                    perferendis autem adipisci veniam maiores recusandae aperiam obcaecati consectetur dolore ratione
+                    eos dolorum quo libero suscipit voluptate.</p>
+            </div>
+        </div>
+        <div class="card">
+            <div class="tag-info">MEDIA QUERIES</div>
+            <div class="card-content">
+                <div class="responsive">Lorem ipsum dolor sit amet, consectetur adipisicing elit. Doloremque quaerat
+                    repellat quod? Fuga soluta eius incidunt maiores, nostrum excepturi illo accusamus, nemo itaque,
+                    aliquam harum tempore. Enim tenetur delectus ullam!</div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="tag-info">DISPLAY GRID</div>
+            <div class="card-content">
+                <div class="grid-container">
+                    <div class="box">1</div>
+                    <div class="box">2</div>
+                    <div class="box">3</div>
+                    <div class="box">4</div>
+                    <div class="box">5</div>
+
+                </div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="tag-info">IFRAME</div>
+            <div class="card-content row">
+                <iframe loading="lazy" style="width: 35%; height: auto; aspect-ratio: 9 / 16; flex-shrink: 0"
+                    src="https://www.canva.com/design/DAHJyOjzPRU/yeIrI44yCiRyhzf68Voebw/watch?embed"
+                    allowfullscreen="allowfullscreen" allow="fullscreen"></iframe>
+                <iframe loading="lazy" style="width: 100%; height: 100%;" src="profile.html"></iframe>
+            </div>
         </div>
     </article>
 </body>
