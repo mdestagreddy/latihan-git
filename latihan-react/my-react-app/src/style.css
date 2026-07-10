@@ -1,0 +1,8 @@
+h1 {
+    color: red;
+}  
+
+div.box {
+    border: 1px solid white;
+    border-radius: 8px;
+}
