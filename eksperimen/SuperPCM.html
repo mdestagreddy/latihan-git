@@ -5,7 +5,7 @@
         <script src="SuperPCM.js"></script>
     </head>
     <body>
-        <input type="url" id="source" value="file:///C:/latihan-git/eksperimen/MUSIC%20RHYTHM%20EDISI%20JULI'23_cut.wav" />
+        <input type="url" id="source" value="file:///C:/latihan-git/eksperimen/MUSIC AEROBIC EDIT.wav" />
         <br><br>
         <div id="info">Time: 0s<br>Duration: 0s</div>
         <div id="metadata" style="font-size: 12px"></div>
@@ -19,7 +19,7 @@
         <script>
             SuperPCM.runOnBackground = true;
 
-            var player = new SuperPCM.player();
+            var player = new SuperPCM.player(null, true);
             player.loop = true;
             player.bufferSize = 4096;
             player.gapless = false;

@@ -6,11 +6,11 @@
  * Features:
  *  - PCM 8/16/24/32-bit signed integer
  *  - PCM 32-bit float (WAV AudioFormat 3)
- *  - ADPCM 4-bit (IMA ADPCM) & 3-bit, include Joint-Stereo
+ *  - ADPCM 4-bit (IMA ADPCM and MS ADPCM) & 3-bit, include Joint-Stereo
  *  - AudioBuffer <-> PCM
  *  - PCM <-> WAV/MP3/FLAC/EAC (Blob)
  *  - WAV <-> AudioBuffer/PCM
- *  - Streaming PCM data
+ *  - Streaming PCM data (ScriptProcessorNode for real-time audio DSP and AudioWorkletNode to improve audio performance)
  *  - Player
  *  - Audio Stream from <audio> or <video>
  *  - Recorder
@@ -24,10 +24,17 @@
  *  - Audio Watermark
  * 
  * Supports asynchronous and synchronous processing on some features
- * No ES Module, no TypeScript. Exposes a global: window.SuperPCM (or global.SuperPCM).
  */
 
-(function (global) {
+(function(root, factory) {
+  if (typeof module === "object" && module.exports) {
+    module.exports = factory();
+  } else if (typeof define === "function" && define.amd) {
+    define(["SuperPCM"], factory);
+  } else {
+    root.SuperPCM = factory();
+  }
+})(typeof self !== "undefined" ? self : this, function() {
   var SuperPCM = {};
 
   // Bit-depth constants
@@ -62,92 +69,95 @@
 
   // Streaming running on Background (default: false)
   SuperPCM.runOnBackground = false;
-  
+
+  // Optional streaming PCM uses AudioWorkletNode to improve audio performance
+  SuperPCM.useWorklet = false;
+
   // Asynchronous processing frame size
   SuperPCM.asyncFrameSize = 65536;
-  
+
   /** Asynchronous Processing **/
-  SuperPCM.AsyncProcessing = function (options) {
+  SuperPCM.AsyncProcessing = function(options) {
     options = options || {};
-  
+
     var _this = this;
     var timer = null;
-  
+
     this.async = options.async !== false;
     this.stepSize = options.stepSize || options.frameSize || SuperPCM.asyncFrameSize || 65536;
-  
+
     this.vars = {};
-  
+
     this.running = false;
     this.paused = false;
     this.stopped = false;
     this.done = false;
-  
-    this.initial = function (vars) {
+
+    this.initial = function(vars) {
       vars = vars || {};
-  
+
       for (var k in vars) {
         if (Object.prototype.hasOwnProperty.call(vars, k)) {
           this.vars[k] = vars[k];
         }
       }
-  
+
       return this;
     };
-  
-    this.conditional = options.conditional || function (vars) {
+
+    this.conditional = options.conditional || function(vars) {
       return vars.index < vars.total;
     };
-  
-    this.logical = options.logical || function (vars) {
+
+    this.logical = options.logical || function(vars) {
       vars.index++;
     };
-  
-    this.fnProcess = options.process || function () {};
-  
-    this.stop = function () {
+
+    this.fnProcess = options.process || function() {};
+
+    this.stop = function() {
       this.running = false;
       this.paused = false;
       this.stopped = true;
-  
+
       if (timer != null) {
         clearTimeout(timer);
         timer = null;
       }
-  
+
       return this;
     };
-  
-    this.pause = function () {
+
+    this.pause = function() {
       if (this.running && !this.done) {
         this.paused = true;
       }
-  
+
       return this;
     };
-  
-    this.resume = function (callback) {
+
+    this.resume = function(callback) {
       if (!this.done && !this.stopped) {
         this.paused = false;
         this.running = true;
         this.processing(callback);
       }
-  
+
       return this;
     };
-  
-    this.reset = function () {
+
+    this.reset = function() {
       this.stop();
-  
+
       this.running = false;
       this.paused = false;
       this.stopped = false;
       this.done = false;
-  
+
       return this;
     };
-  
-    this.status = function () {
+
+    this.status = function() {
       return {
         running: this.running,
         paused: this.paused,
@@ -156,8 +166,8 @@
         vars: this.vars
       };
     };
-  
-    this.processing = function (callback) {
+
+    this.processing = function(callback) {
       if (this.done) {
         if (typeof callback === "function") {
           callback({
@@ -169,7 +179,7 @@
         }
         return this;
       }
-  
+
       if (this.stopped) {
         if (typeof callback === "function") {
           callback({
@@ -181,7 +191,7 @@
         }
         return this;
       }
-  
+
       if (this.paused) {
         if (typeof callback === "function") {
           callback({
@@ -193,17 +203,17 @@
         }
         return this;
       }
-  
+
       this.running = true;
-  
+
       var count = 0;
-  
+
       while (!this.stopped && !this.paused && this.conditional(this.vars)) {
         this.fnProcess(this.vars);
         this.logical(this.vars);
-  
+
         count++;
-  
+
         if (this.async && count >= this.stepSize) {
           if (typeof callback === "function") {
             callback({
@@ -213,16 +223,16 @@
               vars: this.vars
             });
           }
-  
-          timer = setTimeout(function () {
+
+          timer = setTimeout(function() {
             timer = null;
             _this.processing(callback);
           }, 0);
-  
+
           return this;
         }
       }
-  
+
       if (this.stopped) {
         this.running = false;
       } else if (this.paused) {
@@ -231,7 +241,7 @@
         this.running = false;
         this.done = true;
       }
-  
+
       if (typeof callback === "function") {
         callback({
           done: this.done,
@@ -240,43 +250,329 @@
           vars: this.vars
         });
       }
-  
+
       return this;
     };
   };
-  
+
   /** ADPCM (Adaptive Differental Pulse-Code Modulation)  **/
   // IMA Table
   var IMA_ADPCM_INDEX_TABLE = [
-    -1, -1, -1, -1, 2, 4, 6, 8,
-    -1, -1, -1, -1, 2, 4, 6, 8
-  ],
-  IMA_ADPCM_STEP_SIZE_TABLE = [
-    7, 8, 9, 10, 11, 12, 13, 14, 16, 17,
-    19, 21, 23, 25, 28, 31, 34, 37, 41, 45,
-    50, 55, 60, 66, 73, 80, 88, 97, 107, 118,
-    130, 143, 157, 173, 190, 209, 230, 253, 279, 307,
-    337, 371, 408, 449, 494, 544, 598, 658, 724, 796,
-    876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066,
-    2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358,
-    5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899,
-    15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767
-  ];
-  
+      -1, -1, -1, -1, 2, 4, 6, 8,
+      -1, -1, -1, -1, 2, 4, 6, 8
+    ],
+    IMA_ADPCM_STEP_SIZE_TABLE = [
+      7, 8, 9, 10, 11, 12, 13, 14, 16, 17,
+      19, 21, 23, 25, 28, 31, 34, 37, 41, 45,
+      50, 55, 60, 66, 73, 80, 88, 97, 107, 118,
+      130, 143, 157, 173, 190, 209, 230, 253, 279, 307,
+      337, 371, 408, 449, 494, 544, 598, 658, 724, 796,
+      876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066,
+      2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358,
+      5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899,
+      15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767
+    ];
+
+  // Microsoft ADPCM tables (WAVE_FORMAT_ADPCM / format tag 0x0002)
+  var MS_ADPCM_ADAPTATION_TABLE = [
+      230, 230, 230, 230, 307, 409, 512, 614,
+      768, 614, 512, 409, 307, 230, 230, 230
+    ],
+    MS_ADPCM_COEFFICIENTS = [
+      [256, 0],
+      [512, -256],
+      [0, 0],
+      [192, 64],
+      [240, 0],
+      [460, -208],
+      [392, -232]
+    ];
+
+  function normalizeMSADPCMCoefficients(coefficients) {
+    if (!coefficients || !coefficients.length) return MS_ADPCM_COEFFICIENTS;
+    var out = [];
+    for (var i = 0; i < coefficients.length; i++) {
+      var pair = coefficients[i];
+      if (pair && pair.length >= 2) out.push([pair[0] | 0, pair[1] | 0]);
+    }
+    return out.length ? out : MS_ADPCM_COEFFICIENTS;
+  }
+
+  function msAdpcmSignedNibble(code) {
+    code &= 0x0F;
+    return code & 0x08 ? code - 16 : code;
+  }
+
+  function msAdpcmDecodeNibble(code, state, coefficients) {
+    var pair = coefficients[state.predictor] || coefficients[0];
+    var signed = msAdpcmSignedNibble(code);
+    var predicted = ((state.sample1 * pair[0]) + (state.sample2 * pair[1])) >> 8;
+    var sample = clamp(predicted + signed * state.delta, -32768, 32767);
+    state.sample2 = state.sample1;
+    state.sample1 = sample;
+    state.delta = Math.max(16, (MS_ADPCM_ADAPTATION_TABLE[code & 0x0F] * state.delta) >> 8);
+    return sample;
+  }
+
+  function msAdpcmEncodeNibble(sample, state, coefficients) {
+    var pair = coefficients[state.predictor] || coefficients[0];
+    var predicted = ((state.sample1 * pair[0]) + (state.sample2 * pair[1])) >> 8;
+    var signed = Math.round((sample - predicted) / state.delta);
+    signed = clamp(signed, -8, 7);
+    var code = signed & 0x0F;
+    var reconstructed = clamp(predicted + signed * state.delta, -32768, 32767);
+    state.sample2 = state.sample1;
+    state.sample1 = reconstructed;
+    state.delta = Math.max(16, (MS_ADPCM_ADAPTATION_TABLE[code] * state.delta) >> 8);
+    return code;
+  }
+
+  /*
+   * Select both predictor and initial delta for each MS ADPCM block.
+   *
+   * Using only abs(sample1 - sample2) is fragile: if a block starts at a
+   * sawtooth/square-wave discontinuity the initial delta becomes excessively
+   * large and masks detail for much of the block. This routine estimates the
+   * prediction residual and simulates several delta candidates.
+   */
+  function chooseMSADPCMState(samples, startFrame, channel, channels, framesAvailable, coefficients) {
+    var sample2 = framesAvailable > 0 ? samples[(startFrame * channels) + channel] : 0;
+    var sample1 = framesAvailable > 1 ? samples[((startFrame + 1) * channels) + channel] : sample2;
+    var lookahead = Math.min(framesAvailable, 64);
+    var bestPredictor = 0;
+    var bestDelta = 16;
+    var bestError = Infinity;
+
+    if (lookahead <= 2) {
+      return {
+        predictor: 0,
+        delta: clamp(Math.abs(sample1 - sample2), 16, 65535)
+      };
+    }
+
+    for (var predictor = 0; predictor < coefficients.length; predictor++) {
+      var pair = coefficients[predictor];
+      var prev2 = sample2;
+      var prev1 = sample1;
+      var residualSum = 0;
+      var residualMax = 0;
+      var residualCount = 0;
+
+      for (var i = 2; i < lookahead; i++) {
+        var target = samples[((startFrame + i) * channels) + channel];
+        var predicted = ((prev1 * pair[0]) + (prev2 * pair[1])) >> 8;
+        var residual = Math.abs(target - predicted);
+
+        residualSum += residual;
+        if (residual > residualMax) residualMax = residual;
+        residualCount++;
+
+        prev2 = prev1;
+        prev1 = target;
+      }
+
+      var averageResidual = residualCount ? residualSum / residualCount : Math.abs(sample1 - sample2);
+      var baseDelta = Math.max(16, Math.round(Math.max(averageResidual * 0.75, residualMax / 7)));
+      var firstDifference = Math.abs(sample1 - sample2);
+      var candidates = [
+        16,
+        Math.round(baseDelta * 0.50),
+        Math.round(baseDelta * 0.75),
+        baseDelta,
+        Math.round(baseDelta * 1.25),
+        Math.round(baseDelta * 1.50),
+        Math.round(baseDelta * 2.00),
+        firstDifference
+      ];
+
+      var tested = {};
+      for (var d = 0; d < candidates.length; d++) {
+        var initialDelta = clamp(candidates[d] | 0, 16, 65535);
+        if (tested[initialDelta]) continue;
+        tested[initialDelta] = true;
+
+        var state = {
+          predictor: predictor,
+          delta: initialDelta,
+          sample1: sample1,
+          sample2: sample2
+        };
+        var error = 0;
+
+        for (var frame = 2; frame < lookahead; frame++) {
+          var original = samples[((startFrame + frame) * channels) + channel];
+          msAdpcmEncodeNibble(original, state, coefficients);
+          var difference = original - state.sample1;
+          error += difference * difference;
+
+          if (state.sample1 === -32768 || state.sample1 === 32767) {
+            error += 1048576;
+          }
+        }
+
+        if (error < bestError) {
+          bestError = error;
+          bestPredictor = predictor;
+          bestDelta = initialDelta;
+        }
+      }
+    }
+
+    return {
+      predictor: bestPredictor,
+      delta: bestDelta
+    };
+  }
+
+  function encodeMSADPCM(pcmData, channels, blockAlign, coefficients) {
+    var pcm = pcmData instanceof Int16Array ? pcmData : new Int16Array(pcmData);
+    channels = channels === 2 ? 2 : 1;
+    coefficients = normalizeMSADPCMCoefficients(coefficients);
+    var BLOCK_ALIGN = blockAlign != null ? Math.max(7 * channels + 1, Math.round(blockAlign)) : (channels === 2 ? 512 : 256);
+    var SAMPLES_PER_BLOCK = Math.floor(((BLOCK_ALIGN - 7 * channels) * 2) / channels) + 2;
+    var totalFrames = Math.floor(pcm.length / channels);
+    var numBlocks = Math.max(1, Math.ceil(totalFrames / SAMPLES_PER_BLOCK));
+    var adpcmData = new Uint8Array(numBlocks * BLOCK_ALIGN);
+    var frameIndex = 0;
+
+    for (var b = 0; b < numBlocks; b++) {
+      var blockOffset = b * BLOCK_ALIGN;
+      var framesInBlock = Math.min(SAMPLES_PER_BLOCK, Math.max(0, totalFrames - frameIndex));
+      var states = [];
+      var c;
+
+      for (c = 0; c < channels; c++) {
+        var sample2 = framesInBlock > 0 ? pcm[frameIndex * channels + c] : 0;
+        var sample1 = framesInBlock > 1 ? pcm[(frameIndex + 1) * channels + c] : sample2;
+        var selected = chooseMSADPCMState(pcm, frameIndex, c, channels, framesInBlock, coefficients);
+
+        states[c] = {
+          predictor: selected.predictor,
+          delta: selected.delta,
+          sample1: sample1,
+          sample2: sample2
+        };
+        adpcmData[blockOffset + c] = selected.predictor;
+      }
+
+      var p = blockOffset + channels;
+      var view = new DataView(adpcmData.buffer);
+      for (c = 0; c < channels; c++, p += 2) {
+        view.setUint16(p, clamp(states[c].delta, 16, 65535), true);
+      }
+      for (c = 0; c < channels; c++, p += 2) view.setInt16(p, states[c].sample1, true);
+      for (c = 0; c < channels; c++, p += 2) view.setInt16(p, states[c].sample2, true);
+
+      var writePos = blockOffset + 7 * channels;
+      if (channels === 1) {
+        var pending = -1;
+        for (var f = 2; f < framesInBlock; f++) {
+          var code = msAdpcmEncodeNibble(pcm[(frameIndex + f)], states[0], coefficients);
+          if (pending < 0) pending = code;
+          else {
+            adpcmData[writePos++] = ((pending & 0x0F) << 4) | (code & 0x0F);
+            pending = -1;
+          }
+        }
+        if (pending >= 0 && writePos < blockOffset + BLOCK_ALIGN) adpcmData[writePos] = (pending & 0x0F) << 4;
+      } else {
+        for (var f = 2; f < framesInBlock && writePos < blockOffset + BLOCK_ALIGN; f++) {
+          var leftCode = msAdpcmEncodeNibble(pcm[(frameIndex + f) * 2], states[0], coefficients);
+          var rightCode = msAdpcmEncodeNibble(pcm[(frameIndex + f) * 2 + 1], states[1], coefficients);
+          adpcmData[writePos++] = ((leftCode & 0x0F) << 4) | (rightCode & 0x0F);
+        }
+      }
+      frameIndex += framesInBlock;
+    }
+
+    return {
+      adpcmData: adpcmData,
+      BLOCK_ALIGN: BLOCK_ALIGN,
+      SAMPLES_PER_BLOCK: SAMPLES_PER_BLOCK,
+      coefficients: coefficients
+    };
+  }
+
+  function decodeMSADPCM(adpcmData, totalFrames, channels, blockAlign, samplesPerBlock, coefficients) {
+    var bytes = adpcmData instanceof Uint8Array ? adpcmData : new Uint8Array(adpcmData);
+    channels = channels === 2 ? 2 : 1;
+    coefficients = normalizeMSADPCMCoefficients(coefficients);
+    blockAlign = blockAlign || (channels === 2 ? 512 : 256);
+    samplesPerBlock = samplesPerBlock || (Math.floor(((blockAlign - 7 * channels) * 2) / channels) + 2);
+    var output = new Int16Array(Math.max(0, totalFrames) * channels);
+    var outFrame = 0;
+
+    for (var blockOffset = 0; blockOffset < bytes.length && outFrame < totalFrames; blockOffset += blockAlign) {
+      var blockSize = Math.min(blockAlign, bytes.length - blockOffset);
+      if (blockSize < 7 * channels) break;
+      var view = new DataView(bytes.buffer, bytes.byteOffset + blockOffset, blockSize);
+      var states = [];
+      var c, p = channels;
+      for (c = 0; c < channels; c++) states[c] = {
+        predictor: view.getUint8(c),
+        delta: 16,
+        sample1: 0,
+        sample2: 0
+      };
+      for (c = 0; c < channels; c++, p += 2) {
+        states[c].delta = Math.max(16, view.getUint16(p, true));
+      }
+      for (c = 0; c < channels; c++, p += 2) states[c].sample1 = view.getInt16(p, true);
+      for (c = 0; c < channels; c++, p += 2) states[c].sample2 = view.getInt16(p, true);
+
+      if (outFrame < totalFrames) {
+        for (c = 0; c < channels; c++) output[outFrame * channels + c] = states[c].sample2;
+        outFrame++;
+      }
+      if (outFrame < totalFrames) {
+        for (c = 0; c < channels; c++) output[outFrame * channels + c] = states[c].sample1;
+        outFrame++;
+      }
+
+      var bytePos = 7 * channels;
+      var maxFrames = Math.min(samplesPerBlock, totalFrames - (outFrame - 2));
+      var decodedInBlock = 2;
+      if (channels === 1) {
+        while (bytePos < blockSize && outFrame < totalFrames && decodedInBlock < maxFrames) {
+          var packed = view.getUint8(bytePos++);
+          output[outFrame++] = msAdpcmDecodeNibble((packed >> 4) & 0x0F, states[0], coefficients);
+          decodedInBlock++;
+          if (outFrame < totalFrames && decodedInBlock < maxFrames) {
+            output[outFrame++] = msAdpcmDecodeNibble(packed & 0x0F, states[0], coefficients);
+            decodedInBlock++;
+          }
+        }
+      } else {
+        while (bytePos < blockSize && outFrame < totalFrames && decodedInBlock < maxFrames) {
+          var packed = view.getUint8(bytePos++);
+          output[outFrame * 2] = msAdpcmDecodeNibble((packed >> 4) & 0x0F, states[0], coefficients);
+          output[outFrame * 2 + 1] = msAdpcmDecodeNibble(packed & 0x0F, states[1], coefficients);
+          outFrame++;
+          decodedInBlock++;
+        }
+      }
+    }
+
+    var outBytes = new Uint8Array(output.length * 2);
+    var outView = new DataView(outBytes.buffer);
+    for (var i = 0; i < output.length; i++) outView.setInt16(i * 2, output[i], true);
+    return outBytes;
+  }
+
   // 3-bit Table
   var ADPCM_INDEX_TABLE_3BIT = [-1, -1, 2, 4, -1, -1, 2, 4],
-  ADPCM_STEP_SIZE_TABLE_3BIT = [
-    7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-    17, 18, 19, 21, 22, 24, 26, 28, 30, 32,
-    35, 38, 41, 44, 48, 52, 56, 61, 66, 71,
-    77, 83, 90, 97, 105, 114, 123, 133, 144, 156,
-    169, 183, 198, 214, 232, 251, 272, 294, 318, 344,
-    372, 402, 435, 471, 510, 552, 597, 646, 699, 756,
-    818, 885, 958, 1037, 1122, 1214, 1314, 1422, 1539, 1665,
-    1802, 1950, 2110, 2283, 2470, 2673, 2892, 3129, 3386, 3664,
-    3965, 4290, 4642, 5023, 5435, 5881, 6363, 6885, 7450
-  ];
-  
+    ADPCM_STEP_SIZE_TABLE_3BIT = [
+      7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+      17, 18, 19, 21, 22, 24, 26, 28, 30, 32,
+      35, 38, 41, 44, 48, 52, 56, 61, 66, 71,
+      77, 83, 90, 97, 105, 114, 123, 133, 144, 156,
+      169, 183, 198, 214, 232, 251, 272, 294, 318, 344,
+      372, 402, 435, 471, 510, 552, 597, 646, 699, 756,
+      818, 885, 958, 1037, 1122, 1214, 1314, 1422, 1539, 1665,
+      1802, 1950, 2110, 2283, 2470, 2673, 2892, 3129, 3386, 3664,
+      3965, 4290, 4642, 5023, 5435, 5881, 6363, 6885, 7450
+    ];
+
   // Mono
   function encodeMonoADPCM(pcmData, blockAlign) {
     var pcm = pcmData instanceof Int16Array ? pcmData : new Int16Array(pcmData);
@@ -288,7 +584,7 @@
 
     var adpcmData = new Uint8Array(numBlocks * BLOCK_ALIGN);
     var view = new DataView(adpcmData.buffer);
-    
+
     var pcmIdx = 0;
 
     for (var b = 0; b < numBlocks; b++) {
@@ -306,7 +602,7 @@
       var adpcmBuffer = 0;
 
       var samplesInBlock = Math.min(SAMPLES_PER_BLOCK - 1, pcm.length - pcmIdx);
-      
+
       for (var s = 0; s < samplesInBlock; s++) {
         var pcmSample = pcm[pcmIdx++];
         var step = IMA_ADPCM_STEP_SIZE_TABLE[stepIndex];
@@ -314,20 +610,24 @@
         var code = 0;
 
         if (diff < 0) {
-          code = 8; diff = -diff;
+          code = 8;
+          diff = -diff;
         }
 
         var tempDiff = step;
         if (diff >= tempDiff) {
-          code |= 4; diff -= tempDiff;
+          code |= 4;
+          diff -= tempDiff;
         }
         tempDiff >>= 1;
         if (diff >= tempDiff) {
-          code |= 2; diff -= tempDiff;
+          code |= 2;
+          diff -= tempDiff;
         }
         tempDiff >>= 1;
         if (diff >= tempDiff) {
-          code |= 1; diff -= tempDiff;
+          code |= 1;
+          diff -= tempDiff;
         }
 
         var diffQ = 0;
@@ -335,7 +635,7 @@
         if (code & 2) diffQ += (step >> 1);
         if (code & 1) diffQ += (step >> 2);
         diffQ += (step >> 3);
-        
+
         if (code & 8) predictor -= diffQ;
         else predictor += diffQ;
 
@@ -364,51 +664,51 @@
       SAMPLES_PER_BLOCK: SAMPLES_PER_BLOCK
     };
   }
-  
+
   function decodeMonoADPCM(adpcmData, totalSamples, blockAlign, samplesPerBlock) {
     var bytes = adpcmData instanceof Uint8Array ? adpcmData : new Uint8Array(adpcmData);
     var pcmData = new Int16Array(totalSamples);
     var pcmIdx = 0;
-    
+
     blockAlign = blockAlign || 256;
     var numBlocks = Math.ceil(bytes.length / blockAlign);
 
     for (var b = 0; b < numBlocks; b++) {
       var blockOffset = b * blockAlign;
       if (blockOffset >= bytes.length) break;
-      
+
       var currentBlockSize = Math.min(blockAlign, bytes.length - blockOffset);
       if (currentBlockSize < 4) break;
 
       var view = new DataView(bytes.buffer, bytes.byteOffset + blockOffset, currentBlockSize);
       var predictor = view.getInt16(0, true);
       var stepIndex = view.getUint8(2);
-      
+
       if (pcmIdx < totalSamples) pcmData[pcmIdx++] = predictor;
 
       var byteIdx = 4;
       while (byteIdx < view.byteLength && pcmIdx < totalSamples) {
         var adpcmByte = view.getUint8(byteIdx++);
         var samplesNibble = [adpcmByte & 0x0F, (adpcmByte >> 4) & 0x0F];
-        
+
         for (var s = 0; s < 2; s++) {
           if (pcmIdx >= totalSamples) break;
           var code = samplesNibble[s];
           var step = IMA_ADPCM_STEP_SIZE_TABLE[stepIndex];
-          
+
           var diffQ = 0;
           if (code & 4) diffQ += step;
           if (code & 2) diffQ += (step >> 1);
           if (code & 1) diffQ += (step >> 2);
           diffQ += (step >> 3);
-          
+
           if (code & 8) predictor -= diffQ;
           else predictor += diffQ;
-          
+
           predictor = clamp(predictor, -32768, 32767);
           stepIndex += IMA_ADPCM_INDEX_TABLE[code & 7];
           stepIndex = clamp(stepIndex, 0, 88);
-          
+
           pcmData[pcmIdx++] = predictor;
         }
       }
@@ -421,7 +721,7 @@
     }
     return outBytes;
   }
-  
+
   // Stereo
   function encodeStereoADPCM(pcmData, blockAlign) {
     const BLOCK_ALIGN = blockAlign != null ? Math.round(blockAlign) : 512;
@@ -432,9 +732,9 @@
     const adpcmData = new Uint8Array(numBlocks * BLOCK_ALIGN);
 
     let leftPredictor = 0,
-    leftStepIdx = 0;
+      leftStepIdx = 0;
     let rightPredictor = 0,
-    rightStepIdx = 0;
+      rightStepIdx = 0;
 
     let pcmPairIdx = 0;
 
@@ -443,29 +743,35 @@
       let diff = sample - pred;
       let code = 0;
       if (diff < 0) {
-        code = 8; diff = -diff;
+        code = 8;
+        diff = -diff;
       }
       let tempDiff = step;
       if (diff >= tempDiff) {
-        code |= 4; diff -= tempDiff;
+        code |= 4;
+        diff -= tempDiff;
       }
       tempDiff >>= 1;
       if (diff >= tempDiff) {
-        code |= 2; diff -= tempDiff;
+        code |= 2;
+        diff -= tempDiff;
       }
       tempDiff >>= 1;
       if (diff >= tempDiff) {
-        code |= 1; diff -= tempDiff;
+        code |= 1;
+        diff -= tempDiff;
       }
       let diffQ = 0;
       if (code & 4) diffQ += step;
       if (code & 2) diffQ += (step >> 1);
       if (code & 1) diffQ += (step >> 2);
       diffQ += (step >> 3);
-      pred = (code & 8) ? pred - diffQ: pred + diffQ;
-      if (pred > 32767) pred = 32767; else if (pred < -32768) pred = -32768;
+      pred = (code & 8) ? pred - diffQ : pred + diffQ;
+      if (pred > 32767) pred = 32767;
+      else if (pred < -32768) pred = -32768;
       idx += IMA_ADPCM_INDEX_TABLE[code & 7];
-      if (idx < 0) idx = 0; else if (idx > 88) idx = 88;
+      if (idx < 0) idx = 0;
+      else if (idx > 88) idx = 88;
       return {
         code: code & 0x0F,
         pred,
@@ -481,10 +787,12 @@
       let rSample = pcmData[pcmPairIdx * 2 + 1] ?? 0;
 
       let resL = encodeSampleADPCM(lSample, leftPredictor, leftStepIdx);
-      leftPredictor = resL.pred; leftStepIdx = resL.idx;
+      leftPredictor = resL.pred;
+      leftStepIdx = resL.idx;
 
       let resR = encodeSampleADPCM(rSample, rightPredictor, rightStepIdx);
-      rightPredictor = resR.pred; rightStepIdx = resR.idx;
+      rightPredictor = resR.pred;
+      rightStepIdx = resR.idx;
 
       view.setInt16(0, leftPredictor, true);
       view.setUint8(2, leftStepIdx);
@@ -502,12 +810,14 @@
         for (let k = 0; k < 4; k++) {
           let s1 = pcmData[pcmPairIdx * 2] ?? 0;
           let r1 = encodeSampleADPCM(s1, leftPredictor, leftStepIdx);
-          leftPredictor = r1.pred; leftStepIdx = r1.idx;
+          leftPredictor = r1.pred;
+          leftStepIdx = r1.idx;
           pcmPairIdx++;
 
           let s2 = pcmData[pcmPairIdx * 2] ?? 0;
           let r2 = encodeSampleADPCM(s2, leftPredictor, leftStepIdx);
-          leftPredictor = r2.pred; leftStepIdx = r2.idx;
+          leftPredictor = r2.pred;
+          leftStepIdx = r2.idx;
           pcmPairIdx++;
 
           view.setUint8(byteIdx + k, (r2.code << 4) | r1.code);
@@ -518,12 +828,14 @@
         for (let k = 0; k < 4; k++) {
           let s1 = pcmData[savedRightPairIdx * 2 + 1] ?? 0;
           let r1 = encodeSampleADPCM(s1, rightPredictor, rightStepIdx);
-          rightPredictor = r1.pred; rightStepIdx = r1.idx;
+          rightPredictor = r1.pred;
+          rightStepIdx = r1.idx;
           savedRightPairIdx++;
 
           let s2 = pcmData[savedRightPairIdx * 2 + 1] ?? 0;
           let r2 = encodeSampleADPCM(s2, rightPredictor, rightStepIdx);
-          rightPredictor = r2.pred; rightStepIdx = r2.idx;
+          rightPredictor = r2.pred;
+          rightStepIdx = r2.idx;
           savedRightPairIdx++;
 
           view.setUint8(byteIdx + k, (r2.code << 4) | r1.code);
@@ -538,7 +850,7 @@
       SAMPLES_PER_BLOCK
     };
   }
-  
+
   function decodeStereoADPCM(adpcmData, totalSamples, blockAlign, samplesPerBlock) {
     const pcmData = new Int16Array(totalSamples * 2);
     let pcmPairIdx = 0;
@@ -556,7 +868,7 @@
       let leftStepIdx = view.getUint8(2);
       let rightPredictor = view.getInt16(4, true);
       let rightStepIdx = view.getUint8(6);
-      
+
       if (pcmPairIdx < totalSamples) {
         pcmData[pcmPairIdx * 2] = leftPredictor;
         pcmData[pcmPairIdx * 2 + 1] = rightPredictor;
@@ -574,42 +886,48 @@
         pred = clamp(pred, -32768, 32767);
         idx += IMA_ADPCM_INDEX_TABLE[code & 7];
         idx = clamp(idx, 0, 88);
-        return { pred: pred, idx: idx };
+        return {
+          pred: pred,
+          idx: idx
+        };
       }
 
       let byteIdx = 8;
       while (byteIdx + 8 <= view.byteLength && pcmPairIdx < totalSamples) {
-        let leftBytes = [], rightBytes = [];
-        
+        let leftBytes = [],
+          rightBytes = [];
+
         for (let k = 0; k < 4; k++) leftBytes.push(view.getUint8(byteIdx + k));
         byteIdx += 4;
-        
+
         for (let k = 0; k < 4; k++) rightBytes.push(view.getUint8(byteIdx + k));
         byteIdx += 4;
 
         let savedLeftPairIdx = pcmPairIdx;
-        
+
         for (let k = 0; k < 4; k++) {
           let bVal = leftBytes[k];
           let codes = [bVal & 0x0F, (bVal >> 4) & 0x0F];
           for (let s = 0; s < 2; s++) {
             if (pcmPairIdx >= totalSamples) break;
             let res = decodeSampleADPCM(codes[s], leftPredictor, leftStepIdx);
-            leftPredictor = res.pred; leftStepIdx = res.idx;
+            leftPredictor = res.pred;
+            leftStepIdx = res.idx;
             pcmData[pcmPairIdx * 2] = leftPredictor;
             pcmPairIdx++;
           }
         }
 
         pcmPairIdx = savedLeftPairIdx;
-        
+
         for (let k = 0; k < 4; k++) {
           let bVal = rightBytes[k];
           let codes = [bVal & 0x0F, (bVal >> 4) & 0x0F];
           for (let s = 0; s < 2; s++) {
             if (pcmPairIdx >= totalSamples) break;
             let res = decodeSampleADPCM(codes[s], rightPredictor, rightStepIdx);
-            rightPredictor = res.pred; rightStepIdx = res.idx;
+            rightPredictor = res.pred;
+            rightStepIdx = res.idx;
             pcmData[pcmPairIdx * 2 + 1] = rightPredictor;
             pcmPairIdx++;
           }
@@ -624,39 +942,42 @@
     }
     return outBytes;
   }
-  
+
   // 3-bit
   function encode3BitADPCM(pcmSamples, channels, blockAlign) {
     var totalSamples = pcmSamples.length;
-    
+
     var BLOCK_ALIGN = blockAlign != null ? Math.round(blockAlign) : ((channels === 1) ? 1536 : 3072);
     var headerSize = (channels === 1) ? 3 : 6;
     var payloadBytesPerBlock = BLOCK_ALIGN - headerSize;
-    
+
     var SAMPLES_PER_BLOCK = 1 + Math.floor((payloadBytesPerBlock * 8) / (3 * channels));
-  
+
     var totalBlocks = Math.ceil(totalSamples / (SAMPLES_PER_BLOCK * channels));
     var totalOutputLength = totalBlocks * BLOCK_ALIGN;
     var adpcmData = new Uint8Array(totalOutputLength);
-  
+
     var states = [];
     for (var c = 0; c < channels; c++) {
-      states.push({ predictor: 0, stepIndex: 0 });
+      states.push({
+        predictor: 0,
+        stepIndex: 0
+      });
     }
-  
+
     var sampleIdx = 0;
-  
+
     for (var b = 0; b < totalBlocks; b++) {
       var blockOffset = b * BLOCK_ALIGN;
-      
+
       if (channels === 1) {
         var firstSample = (sampleIdx < totalSamples) ? pcmSamples[sampleIdx] : 0;
         states[0].predictor = firstSample;
-        
+
         adpcmData[blockOffset] = firstSample & 0xFF;
         adpcmData[blockOffset + 1] = (firstSample >> 8) & 0xFF;
         adpcmData[blockOffset + 2] = states[0].stepIndex;
-        
+
         blockOffset += 3;
         sampleIdx++;
       } else {
@@ -664,7 +985,7 @@
         var firstSampleR = (sampleIdx + 1 < totalSamples) ? pcmSamples[sampleIdx + 1] : 0;
         states[0].predictor = firstSampleL;
         states[1].predictor = firstSampleR;
-  
+
         adpcmData[blockOffset] = firstSampleL & 0xFF;
         adpcmData[blockOffset + 1] = (firstSampleL >> 8) & 0xFF;
         adpcmData[blockOffset + 2] = states[0].stepIndex;
@@ -672,34 +993,34 @@
         adpcmData[blockOffset + 3] = firstSampleR & 0xFF;
         adpcmData[blockOffset + 4] = (firstSampleR >> 8) & 0xFF;
         adpcmData[blockOffset + 5] = states[1].stepIndex;
-  
+
         blockOffset += 6;
         sampleIdx += 2;
       }
-  
+
       var bitBuffer = 0;
       var bitCount = 0;
       var payloadBytesWritten = 0;
-  
-      var samplesInThisBlock = (b === totalBlocks - 1) 
-        ? (totalSamples - sampleIdx)
-        : (SAMPLES_PER_BLOCK - 1) * channels;
-  
+
+      var samplesInThisBlock = (b === totalBlocks - 1) ?
+        (totalSamples - sampleIdx) :
+        (SAMPLES_PER_BLOCK - 1) * channels;
+
       for (var s = 0; s < samplesInThisBlock; s++) {
         if (sampleIdx >= totalSamples) break;
-  
+
         var ch = sampleIdx % channels;
         var state = states[ch];
         var sample = pcmSamples[sampleIdx++];
-  
+
         var diff = sample - state.predictor;
         var code = 0;
-  
+
         if (diff < 0) {
           code |= 4;
           diff = -diff;
         }
-  
+
         var step = ADPCM_STEP_SIZE_TABLE_3BIT[state.stepIndex];
         var m = 0;
         if (diff >= step) {
@@ -710,24 +1031,24 @@
           m |= 1;
         }
         code |= m;
-  
+
         var predDiff = step >> 2;
         if (code & 2) predDiff += step;
         if (code & 1) predDiff += (step >> 1);
-  
+
         if (code & 4) state.predictor -= predDiff;
         else state.predictor += predDiff;
-  
+
         if (state.predictor > 32767) state.predictor = 32767;
         else if (state.predictor < -32768) state.predictor = -32768;
-  
+
         state.stepIndex += ADPCM_INDEX_TABLE_3BIT[code];
         if (state.stepIndex > 88) state.stepIndex = 88;
         else if (state.stepIndex < 0) state.stepIndex = 0;
-  
+
         bitBuffer |= (code & 0x07) << bitCount;
         bitCount += 3;
-        
+
         while (bitCount >= 8) {
           if (payloadBytesWritten < payloadBytesPerBlock) {
             adpcmData[blockOffset + payloadBytesWritten++] = bitBuffer & 0xFF;
@@ -736,47 +1057,50 @@
           bitCount -= 8;
         }
       }
-  
+
       if (bitCount > 0 && payloadBytesWritten < payloadBytesPerBlock) {
         adpcmData[blockOffset + payloadBytesWritten++] = bitBuffer & 0xFF;
       }
     }
-  
+
     return {
       adpcmData: adpcmData,
       BLOCK_ALIGN: BLOCK_ALIGN,
       SAMPLES_PER_BLOCK: SAMPLES_PER_BLOCK
     };
   }
-  
+
   function decode3BitADPCM(adpcmData, totalSamples, channels, BLOCK_ALIGN, SAMPLES_PER_BLOCK) {
     var pcmSamples = new Int16Array(totalSamples);
     var totalBlocks = Math.ceil(adpcmData.length / BLOCK_ALIGN);
 
     var states = [];
     for (var c = 0; c < channels; c++) {
-      states.push({ predictor: 0, stepIndex: 0 });
+      states.push({
+        predictor: 0,
+        stepIndex: 0
+      });
     }
-  
+
     var sampleIdx = 0;
 
     for (var b = 0; b < totalBlocks; b++) {
       var blockOffset = b * BLOCK_ALIGN;
       var payloadOffset = 0;
-      
+
       if (channels === 1) {
         if (blockOffset + 3 > adpcmData.length) break;
 
         var pred = adpcmData[blockOffset] | (adpcmData[blockOffset + 1] << 8);
         if (pred & 0x8000) pred |= ~0xFFFF;
-        
+
         states[0].predictor = pred;
         states[0].stepIndex = adpcmData[blockOffset + 2];
-  
+
         if (sampleIdx < totalSamples) {
           pcmSamples[sampleIdx++] = states[0].predictor;
         }
-        
+
         payloadOffset = 3;
       } else {
         if (blockOffset + 6 > adpcmData.length) break;
@@ -785,27 +1109,27 @@
         if (predL & 0x8000) predL |= ~0xFFFF;
         states[0].predictor = predL;
         states[0].stepIndex = adpcmData[blockOffset + 2];
-  
+
         var predR = adpcmData[blockOffset + 3] | (adpcmData[blockOffset + 4] << 8);
         if (predR & 0x8000) predR |= ~0xFFFF;
         states[1].predictor = predR;
         states[1].stepIndex = adpcmData[blockOffset + 5];
-  
+
         if (sampleIdx < totalSamples) pcmSamples[sampleIdx++] = states[0].predictor;
         if (sampleIdx < totalSamples) pcmSamples[sampleIdx++] = states[1].predictor;
-  
+
         payloadOffset = 6;
       }
-  
+
       var bitBuffer = 0;
       var bitCount = 0;
       var payloadBytesPerBlock = BLOCK_ALIGN - payloadOffset;
-  
+
       var samplesToDecodeInBlock = (SAMPLES_PER_BLOCK - 1) * channels;
-  
+
       for (var s = 0; s < samplesToDecodeInBlock; s++) {
         if (sampleIdx >= totalSamples) break;
-  
+
         while (bitCount < 3) {
           if (payloadOffset < payloadBytesPerBlock) {
             var bytePos = blockOffset + payloadOffset;
@@ -816,33 +1140,33 @@
           }
           bitCount += 8;
         }
-  
+
         var code = bitBuffer & 0x07;
         bitBuffer >>>= 3;
         bitCount -= 3;
-  
+
         var ch = sampleIdx % channels;
         var state = states[ch];
         var step = ADPCM_STEP_SIZE_TABLE_3BIT[state.stepIndex];
-  
+
         var predDiff = step >> 2;
         if (code & 2) predDiff += step;
         if (code & 1) predDiff += (step >> 1);
-  
+
         if (code & 4) state.predictor -= predDiff;
         else state.predictor += predDiff;
-  
+
         if (state.predictor > 32767) state.predictor = 32767;
         else if (state.predictor < -32768) state.predictor = -32768;
-  
+
         pcmSamples[sampleIdx++] = state.predictor;
-  
+
         state.stepIndex += ADPCM_INDEX_TABLE_3BIT[code];
         if (state.stepIndex > 88) state.stepIndex = 88;
         else if (state.stepIndex < 0) state.stepIndex = 0;
       }
     }
-  
+
     var outBytes = new Uint8Array(pcmSamples.length * 2);
     var dvOut = new DataView(outBytes.buffer);
     for (var i = 0; i < pcmSamples.length; i++) {
@@ -850,7 +1174,7 @@
     }
     return outBytes;
   }
-  
+
   // 4-bit Joint Stereo
   function encodeJointStereoADPCM4Bit(pcmData, blockAlign) {
     var BLOCK_ALIGN = blockAlign != null ? Math.round(blockAlign) : 512;
@@ -863,8 +1187,10 @@
     var adpcmData = new Uint8Array(numBlocks * BLOCK_ALIGN);
     var view = new DataView(adpcmData.buffer);
 
-    var midPredictor = 0, midStepIdx = 0;
-    var sidePredictor = 0, sideStepIdx = 0;
+    var midPredictor = 0,
+      midStepIdx = 0;
+    var sidePredictor = 0,
+      sideStepIdx = 0;
     var pcmPairIdx = 0;
 
     function encodeSampleADPCM(sample, pred, idx) {
@@ -872,19 +1198,23 @@
       var diff = sample - pred;
       var code = 0;
       if (diff < 0) {
-        code = 8; diff = -diff;
+        code = 8;
+        diff = -diff;
       }
       var tempDiff = step;
       if (diff >= tempDiff) {
-        code |= 4; diff -= tempDiff;
+        code |= 4;
+        diff -= tempDiff;
       }
       tempDiff >>= 1;
       if (diff >= tempDiff) {
-        code |= 2; diff -= tempDiff;
+        code |= 2;
+        diff -= tempDiff;
       }
       tempDiff >>= 1;
       if (diff >= tempDiff) {
-        code |= 1; diff -= tempDiff;
+        code |= 1;
+        diff -= tempDiff;
       }
       var diffQ = 0;
       if (code & 4) diffQ += step;
@@ -898,7 +1228,11 @@
       idx += IMA_ADPCM_INDEX_TABLE[code & 7];
       idx = clamp(idx, 0, 88);
 
-      return { code: code & 0x0F, pred: pred, idx: idx };
+      return {
+        code: code & 0x0F,
+        pred: pred,
+        idx: idx
+      };
     }
 
     for (var b = 0; b < numBlocks; b++) {
@@ -911,10 +1245,12 @@
       var sideSample = Math.floor((lSample - rSample) / 2);
 
       var resM = encodeSampleADPCM(midSample, midPredictor, midStepIdx);
-      midPredictor = resM.pred; midStepIdx = resM.idx;
+      midPredictor = resM.pred;
+      midStepIdx = resM.idx;
 
       var resS = encodeSampleADPCM(sideSample, sidePredictor, sideStepIdx);
-      sidePredictor = resS.pred; sideStepIdx = resS.idx;
+      sidePredictor = resS.pred;
+      sideStepIdx = resS.idx;
 
       view.setInt16(blockOffset + 0, midPredictor, true);
       view.setUint8(blockOffset + 2, midStepIdx);
@@ -935,10 +1271,12 @@
         var sNext = Math.floor((lSampleNext - rSampleNext) / 2);
 
         var rM = encodeSampleADPCM(mNext, midPredictor, midStepIdx);
-        midPredictor = rM.pred; midStepIdx = rM.idx;
+        midPredictor = rM.pred;
+        midStepIdx = rM.idx;
 
         var rS = encodeSampleADPCM(sNext, sidePredictor, sideStepIdx);
-        sidePredictor = rS.pred; sideStepIdx = rS.idx;
+        sidePredictor = rS.pred;
+        sideStepIdx = rS.idx;
 
         view.setUint8(blockOffset + byteIdx, (rS.code << 4) | rM.code);
         byteIdx++;
@@ -952,12 +1290,12 @@
       SAMPLES_PER_BLOCK: SAMPLES_PER_BLOCK
     };
   }
-  
+
   function decodeJointStereoADPCM4Bit(adpcmData, totalSamples, blockAlign, samplesPerBlock) {
     var bytes = adpcmData instanceof Uint8Array ? adpcmData : new Uint8Array(adpcmData);
     var pcmData = new Int16Array(totalSamples * 2);
     var pcmPairIdx = 0;
-    
+
     blockAlign = blockAlign || 512;
     var numBlocks = Math.ceil(bytes.length / blockAlign);
 
@@ -968,13 +1306,16 @@
       if (code & 2) diffQ += (step >> 1);
       if (code & 1) diffQ += (step >> 2);
       diffQ += (step >> 3);
-      
+
       pred = (code & 8) ? pred - diffQ : pred + diffQ;
       pred = clamp(pred, -32768, 32767);
-      
+
       idx += IMA_ADPCM_INDEX_TABLE[code & 7];
       idx = clamp(idx, 0, 88);
-      return { pred: pred, idx: idx };
+      return {
+        pred: pred,
+        idx: idx
+      };
     }
 
     for (var b = 0; b < numBlocks; b++) {
@@ -985,7 +1326,7 @@
       if (currentBlockSize < 8) break;
 
       var view = new DataView(bytes.buffer, bytes.byteOffset + blockOffset, currentBlockSize);
-      
+
       var midPredictor = view.getInt16(0, true);
       var midStepIdx = view.getUint8(2);
       var sidePredictor = view.getInt16(4, true);
@@ -1002,15 +1343,17 @@
       var byteIdx = 8;
       while (byteIdx < view.byteLength && pcmPairIdx < totalSamples) {
         var adpcmByte = view.getUint8(byteIdx++);
-        
+
         var midCode = adpcmByte & 0x0F;
         var sideCode = (adpcmByte >> 4) & 0x0F;
 
         var resM = decodeSampleADPCM(midCode, midPredictor, midStepIdx);
-        midPredictor = resM.pred; midStepIdx = resM.idx;
+        midPredictor = resM.pred;
+        midStepIdx = resM.idx;
 
         var resS = decodeSampleADPCM(sideCode, sidePredictor, sideStepIdx);
-        sidePredictor = resS.pred; sideStepIdx = resS.idx;
+        sidePredictor = resS.pred;
+        sideStepIdx = resS.idx;
 
         var left = midPredictor + sidePredictor;
         var right = midPredictor - sidePredictor;
@@ -1028,15 +1371,20 @@
     }
     return outBytes;
   }
-  
+
   // 3-bit Joint-Stereo
   function decodeJointStereoADPCM3Bit(adpcmData, totalSamples, BLOCK_ALIGN, SAMPLES_PER_BLOCK) {
     var pcmSamples = new Int16Array(totalSamples * 2);
     var totalBlocks = Math.ceil(adpcmData.length / BLOCK_ALIGN);
 
-    var states = [
-      { predictor: 0, stepIndex: 0 },
-      { predictor: 0, stepIndex: 0 }
+    var states = [{
+        predictor: 0,
+        stepIndex: 0
+      },
+      {
+        predictor: 0,
+        stepIndex: 0
+      }
     ];
 
     var pcmPairIdx = 0;
@@ -1082,7 +1430,7 @@
       var bitCount = 0;
       var payloadOffset = 6;
       var midVal = 0;
-      
+
       var samplesToDecodeInBlock = (SAMPLES_PER_BLOCK - 1) * 2;
 
       for (var s = 0; s < samplesToDecodeInBlock; s++) {
@@ -1124,94 +1472,105 @@
     }
     return outBytes;
   }
-  
+
   function encodeJointStereoADPCM3Bit(pcmSamples, blockAlign) {
     var totalSamples = pcmSamples.length;
     var totalSamplePairs = Math.floor(totalSamples / 2);
-    
+
     var BLOCK_ALIGN = blockAlign != null ? Math.round(blockAlign) : 3072;
     var headerSize = 6;
     var payloadBytesPerBlock = BLOCK_ALIGN - headerSize;
-    
+
     var SAMPLES_PER_BLOCK = 1 + Math.floor((payloadBytesPerBlock * 8) / 6);
     var totalBlocks = Math.ceil(totalSamplePairs / SAMPLES_PER_BLOCK);
     var adpcmData = new Uint8Array(totalBlocks * BLOCK_ALIGN);
-  
-    var states = [
-      { predictor: 0, stepIndex: 0 },
-      { predictor: 0, stepIndex: 0 }
+
+    var states = [{
+        predictor: 0,
+        stepIndex: 0
+      },
+      {
+        predictor: 0,
+        stepIndex: 0
+      }
     ];
-  
+
     var pairIdx = 0;
-  
+
     for (var b = 0; b < totalBlocks; b++) {
       var blockOffset = b * BLOCK_ALIGN;
-      
+
       var lSample = (pairIdx * 2 < totalSamples) ? pcmSamples[pairIdx * 2] : 0;
       var rSample = (pairIdx * 2 + 1 < totalSamples) ? pcmSamples[pairIdx * 2 + 1] : 0;
-      
+
       var midSample = Math.floor((lSample + rSample) / 2);
       var sideSample = Math.floor((lSample - rSample) / 2);
-      
+
       states[0].predictor = midSample;
       states[1].predictor = sideSample;
-  
+
       adpcmData[blockOffset] = midSample & 0xFF;
       adpcmData[blockOffset + 1] = (midSample >> 8) & 0xFF;
       adpcmData[blockOffset + 2] = states[0].stepIndex;
-  
+
       adpcmData[blockOffset + 3] = sideSample & 0xFF;
       adpcmData[blockOffset + 4] = (sideSample >> 8) & 0xFF;
       adpcmData[blockOffset + 5] = states[1].stepIndex;
-  
+
       var writeOffset = blockOffset + 6;
       pairIdx++;
-  
+
       var bitBuffer = 0;
       var bitCount = 0;
       var payloadBytesWritten = 0;
-  
+
       var pairsInThisBlock = (b === totalBlocks - 1) ? (totalSamplePairs - pairIdx) : (SAMPLES_PER_BLOCK - 1);
-        
+
       for (var p = 0; p < pairsInThisBlock; p++) {
         var lS = pcmSamples[pairIdx * 2];
         var rS = pcmSamples[pairIdx * 2 + 1];
         pairIdx++;
-        
+
         var mS = Math.floor((lS + rS) / 2);
         var sS = Math.floor((lS - rS) / 2);
-        
+
         var channelsSamples = [mS, sS];
-        
+
         for (var ch = 0; ch < 2; ch++) {
           var state = states[ch];
           var sample = channelsSamples[ch];
-          
+
           var diff = sample - state.predictor;
           var code = 0;
           if (diff < 0) {
-            code |= 4; diff = -diff;
+            code |= 4;
+            diff = -diff;
           }
           var step = ADPCM_STEP_SIZE_TABLE_3BIT[state.stepIndex];
           var m = 0;
-          if (diff >= step) { m |= 2; diff -= step; }
-          if (diff >= (step >> 1)) { m |= 1; }
+          if (diff >= step) {
+            m |= 2;
+            diff -= step;
+          }
+          if (diff >= (step >> 1)) {
+            m |= 1;
+          }
           code |= m;
-          
+
           var predDiff = step >> 2;
           if (code & 2) predDiff += step;
           if (code & 1) predDiff += (step >> 1);
-          
+
           if (code & 4) state.predictor -= predDiff;
           else state.predictor += predDiff;
-          
+
           state.predictor = clamp(state.predictor, -32768, 32767);
           state.stepIndex += ADPCM_INDEX_TABLE_3BIT[code];
           state.stepIndex = clamp(state.stepIndex, 0, 88);
-    
+
           bitBuffer |= (code & 0x07) << bitCount;
           bitCount += 3;
-          
+
           while (bitCount >= 8) {
             if (payloadBytesWritten < payloadBytesPerBlock) {
               adpcmData[writeOffset + payloadBytesWritten++] = bitBuffer & 0xFF;
@@ -1225,13 +1584,21 @@
         adpcmData[writeOffset + payloadBytesWritten++] = bitBuffer & 0xFF;
       }
     }
-  
+
     return {
       adpcmData: adpcmData,
       BLOCK_ALIGN: BLOCK_ALIGN,
       SAMPLES_PER_BLOCK: SAMPLES_PER_BLOCK
     };
   }
+  SuperPCM.encodeMSADPCM = function(pcmData, channels, blockAlign, coefficients) {
+    return encodeMSADPCM(pcmData, channels, blockAlign, coefficients);
+  };
+
+  SuperPCM.decodeMSADPCM = function(adpcmData, totalFrames, channels, blockAlign, samplesPerBlock, coefficients) {
+    return decodeMSADPCM(adpcmData, totalFrames, channels, blockAlign, samplesPerBlock, coefficients);
+  };
+
   /** **/
 
   function assignDefaults(target, src) {
@@ -1243,11 +1610,11 @@
     }
     return target;
   }
-  
+
   function _eventListener(obj) {
     obj.objEventListener = {};
-    
-    obj.executeEventListener = function (eventName, args) {
+
+    obj.executeEventListener = function(eventName, args) {
       if (obj.objEventListener[eventName]) {
         for (var fn in obj.objEventListener[eventName]) {
           obj.objEventListener[eventName][fn].apply(obj, args);
@@ -1255,11 +1622,11 @@
       }
       if (obj[`on${eventName}`] && typeof obj[`on${eventName}`] == "function") obj[`on${eventName}`].apply(obj, args);
     }
-    obj.addEventListener = function (eventName, fn) {
+    obj.addEventListener = function(eventName, fn) {
       if (!obj.objEventListener[eventName]) obj.objEventListener[eventName] = {};
       obj.objEventListener[eventName][fn] = fn;
     }
-    obj.removeEventListener = function (eventName, fn) {
+    obj.removeEventListener = function(eventName, fn) {
       if (obj.objEventListener[eventName] && obj.objEventListener[eventName][fn]) {
         obj.objEventListener[eventName][fn] = null;
       }
@@ -1267,7 +1634,7 @@
   }
 
   function clamp(v, min, max) {
-    return v < min ? min: (v > max ? max: v);
+    return v < min ? min : (v > max ? max : v);
   }
 
   function repeat(r, v) {
@@ -1300,7 +1667,7 @@
 
     return result;
   }
-  
+
   // Global pool array to track active hardware AudioContext instances
   SuperPCM._contextPool = [];
 
@@ -1311,11 +1678,11 @@
    * * @param {Number} sampleRate - Target hardware sample rate
    * @returns {AudioContext} A safely managed AudioContext instance
    */
-  SuperPCM.audioCtx = function (sampleRate) {
+  SuperPCM.audioCtx = function(sampleRate) {
     sampleRate = sampleRate ?? SuperPCM.defaults.sampleRate;
 
     // 1. Flush and filter out any context that has already been closed
-    SuperPCM._contextPool = SuperPCM._contextPool.filter(function (ctx) {
+    SuperPCM._contextPool = SuperPCM._contextPool.filter(function(ctx) {
       return ctx && ctx.state !== 'closed' && !ctx._superPcmClosed;
     });
 
@@ -1335,16 +1702,18 @@
 
     // 3. Spawning the new hardware node instance
     var AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    var ctx = new AudioContextClass({ sampleRate: sampleRate });
-    
+    var ctx = new AudioContextClass({
+      sampleRate: sampleRate
+    });
+
     // Resume the AudioContext if browser is blocking auto start context
     if (ctx.state === 'suspended') {
       ctx.resume();
     }
-    
+
     // Inject a manual closure tracker hook because synchronous state checks can be lagging
     var nativeClose = ctx.close;
-    ctx.close = function () {
+    ctx.close = function() {
       ctx._superPcmClosed = true;
       return nativeClose.apply(ctx, arguments);
     };
@@ -1355,9 +1724,9 @@
   };
 
   /**
-  * Encode a single Float32 amplitude (-1..1) to PCM bytes at given offset.
-  * Returns new offset.
-  */
+   * Encode a single Float32 amplitude (-1..1) to PCM bytes at given offset.
+   * Returns new offset.
+   */
   function encodeSample(value, bitDepth, isFloat, out, dv, offset) {
     var v = clamp(value || 0, -1, 1);
     if (offset < 0 || offset + getBytesPerSample(bitDepth, isFloat) > out.length) return offset;
@@ -1377,36 +1746,36 @@
         return offset + 1;
       }
       case SuperPCM.BIT_DEPTH_16: {
-          // 16-bit signed PCM
-          var s16 = v < 0 ? Math.round(v * 0x8000): Math.round(v * 0x7FFF);
-          s16 = clamp(s16, -0x8000, 0x7FFF);
-          dv.setInt16(offset, s16, true);
-          return offset + 2;
-        }
+        // 16-bit signed PCM
+        var s16 = v < 0 ? Math.round(v * 0x8000) : Math.round(v * 0x7FFF);
+        s16 = clamp(s16, -0x8000, 0x7FFF);
+        dv.setInt16(offset, s16, true);
+        return offset + 2;
+      }
       case SuperPCM.BIT_DEPTH_24: {
-          // 24-bit signed PCM
-          var s24 = v < 0 ? Math.round(v * 0x800000): Math.round(v * 0x7FFFFF);
-          s24 = clamp(s24, -0x800000, 0x7FFFFF);
-          out[offset] = s24 & 0xFF;
-          out[offset + 1] = (s24 >> 8) & 0xFF;
-          out[offset + 2] = (s24 >> 16) & 0xFF;
-          return offset + 3;
-        }
+        // 24-bit signed PCM
+        var s24 = v < 0 ? Math.round(v * 0x800000) : Math.round(v * 0x7FFFFF);
+        s24 = clamp(s24, -0x800000, 0x7FFFFF);
+        out[offset] = s24 & 0xFF;
+        out[offset + 1] = (s24 >> 8) & 0xFF;
+        out[offset + 2] = (s24 >> 16) & 0xFF;
+        return offset + 3;
+      }
       case SuperPCM.BIT_DEPTH_32: {
-          // 32-bit signed PCM
-          var s32 = v < 0 ? Math.round(v * 0x80000000): Math.round(v * 0x7FFFFFFF);
-          dv.setInt32(offset, s32, true);
-          return offset + 4;
-        }
+        // 32-bit signed PCM
+        var s32 = v < 0 ? Math.round(v * 0x80000000) : Math.round(v * 0x7FFFFFFF);
+        dv.setInt32(offset, s32, true);
+        return offset + 4;
+      }
       default:
         throw new Error('Unsupported bitDepth: ' + bitDepth);
     }
   }
 
   /**
-  * Decode a single PCM sample from bytes at given offset.
-  * Returns { value, offset } where value is Float32 amplitude (-1..1).
-  */
+   * Decode a single PCM sample from bytes at given offset.
+   * Returns { value, offset } where value is Float32 amplitude (-1..1).
+   */
   function getSample(bytes, dv, offset, bitDepth, isFloat) {
     var v;
     if (offset < 0 || offset + getBytesPerSample(bitDepth, isFloat) > bytes.length) return 0;
@@ -1445,13 +1814,14 @@
         throw new Error('Unsupported bitDepth: ' + bitDepth);
     }
   }
+
   function decodeSample(bytes, dv, offset, bitDepth, isFloat) {
     return {
       value: getSample(bytes, dv, offset, bitDepth, isFloat),
-      offset: offset + Math.floor(isFloat ? 4: bitDepth / 8)
+      offset: offset + Math.floor(isFloat ? 4 : bitDepth / 8)
     };
   }
-  
+
   /**
    * Comprehensive low-level MP3 binary parser. Extracts technical audio stream metrics,
    * resolves LAME extensions, and walks the complete ID3v2 payload to extract Title, Artist,
@@ -1514,13 +1884,13 @@
     // ==================================================================
     if (data[0] === 0x49 && data[1] === 0x44 && data[2] === 0x33) { // Matches "ID3"
       if (pos + 10 > len) return null;
-      
+
       var id3Version = data[pos + 3];
-      var id3Size = ((data[pos + 6] & 0x7F) << 21) | 
-                    ((data[pos + 7] & 0x7F) << 14) | 
-                    ((data[pos + 8] & 0x7F) << 7)  | 
-                    (data[pos + 9] & 0x7F);
-      
+      var id3Size = ((data[pos + 6] & 0x7F) << 21) |
+        ((data[pos + 7] & 0x7F) << 14) |
+        ((data[pos + 8] & 0x7F) << 7) |
+        (data[pos + 9] & 0x7F);
+
       var id3End = 10 + id3Size;
       var framePos = 10;
 
@@ -1529,12 +1899,12 @@
 
         var frameId = String.fromCharCode(data[framePos], data[framePos + 1], data[framePos + 2], data[framePos + 3]);
         var frameSize = (data[framePos + 4] << 24) | (data[framePos + 5] << 16) | (data[framePos + 6] << 8) | data[framePos + 7];
-        
+
         if (id3Version === 4) { // Syncsafe corrections for ID3v2.4 specification profiles
-          frameSize = ((data[framePos + 4] & 0x7F) << 21) | 
-                      ((data[framePos + 5] & 0x7F) << 14) | 
-                      ((data[framePos + 6] & 0x7F) << 7)  | 
-                      (data[framePos + 7] & 0x7F);
+          frameSize = ((data[framePos + 4] & 0x7F) << 21) |
+            ((data[framePos + 5] & 0x7F) << 14) |
+            ((data[framePos + 6] & 0x7F) << 7) |
+            (data[framePos + 7] & 0x7F);
         }
 
         if (framePos + 10 + frameSize > id3End || framePos + 10 + frameSize > len) break;
@@ -1595,16 +1965,22 @@
           ptr++; // Bypass picture type byte
 
           if (picEncoding === 1 || picEncoding === 2) {
-            while (ptr < payloadEnd - 1 && !(data[ptr] === 0x00 && data[ptr + 1] === 0x00)) { ptr += 2; }
+            while (ptr < payloadEnd - 1 && !(data[ptr] === 0x00 && data[ptr + 1] === 0x00)) {
+              ptr += 2;
+            }
             ptr += 2;
           } else {
-            while (ptr < payloadEnd && data[ptr] !== 0x00) { ptr++; }
+            while (ptr < payloadEnd && data[ptr] !== 0x00) {
+              ptr++;
+            }
             ptr++;
           }
 
           if (ptr < payloadEnd) {
             var imagePayloadBytes = data.slice(ptr, payloadEnd);
-            metaTags.imageBlob = new Blob([imagePayloadBytes], { type: mimeType || "image/jpeg" });
+            metaTags.imageBlob = new Blob([imagePayloadBytes], {
+              type: mimeType || "image/jpeg"
+            });
           }
         }
 
@@ -1644,10 +2020,10 @@
     var channelMode = (b3 & 0xC0) >> 6;
 
     var sampleRatesTable = [
-      [11025, 12000, 8000],  
-      [0, 0, 0],             
-      [22050, 24000, 16000], 
-      [44100, 48000, 32000]  
+      [11025, 12000, 8000],
+      [0, 0, 0],
+      [22050, 24000, 16000],
+      [44100, 48000, 32000]
     ];
 
     var bitratesTableMPEG1 = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
@@ -1656,7 +2032,7 @@
     var sampleRate = sampleRatesTable[mpegVersion][sampleRateIndex] || 48000;
     var channels = (channelMode === 3) ? 1 : 2;
     var baseBitrate = (mpegVersion === 3) ? bitratesTableMPEG1[bitrateIndex] : bitratesTableMPEG2[bitrateIndex];
-    
+
     var samplesPerFrame = (sampleRate < 32000) ? 576 : 1152;
     var firstFrameSize = Math.floor(144 * (baseBitrate * 1000) / sampleRate) + paddingBit;
 
@@ -1676,11 +2052,11 @@
 
     if (tagPos + 8 <= len) {
       var tagStr = String.fromCharCode(data[tagPos], data[tagPos + 1], data[tagPos + 2], data[tagPos + 3]);
-      
+
       if (tagStr === "Xing" || tagStr === "Info") {
         isVbr = (tagStr === "Xing");
         var flags = (data[tagPos + 4] << 24) | (data[tagPos + 5] << 16) | (data[tagPos + 6] << 8) | data[tagPos + 7];
-        
+
         var readPtr = tagPos + 8;
         if (flags & 0x01) {
           totalFrames = (data[readPtr] << 24) | (data[readPtr + 1] << 16) | (data[readPtr + 2] << 8) | data[readPtr + 3];
@@ -1715,7 +2091,7 @@
         var b21 = data[scan + 21];
         var b22 = data[scan + 22];
         var b23 = data[scan + 23];
-        
+
         var combined = (b21 << 16) | (b22 << 8) | b23;
         encoderDelay = (combined >> 12) & 0xFFF;
         encoderPadding = combined & 0xFFF;
@@ -1724,7 +2100,7 @@
     }
 
     var isDelayValid = hasLameTag && (encoderDelay > 0);
-    
+
     data = null;
     return {
       audioFormat: "mp3",
@@ -1736,11 +2112,11 @@
       totalFrames: totalFrames,
       duration: (totalFrames * samplesPerFrame) / sampleRate,
       hasLameTag: isDelayValid,
-      encoderDelay: isDelayValid ? encoderDelay : 1105, 
+      encoderDelay: isDelayValid ? encoderDelay : 1105,
       encoderPadding: isDelayValid ? encoderPadding : 0,
-      
+
       // Complete metadata object containing all decoded textual and binary tags
-      metadata: metaTags 
+      metadata: metaTags
     };
   };
 
@@ -1810,20 +2186,20 @@
         var payloadEnd = pos + size;
 
         // 1. RECURSIVE ROUTING FOR CONTAINERS & ITUNES METADATA TAGS
-        if (type === "moov" || type === "trak" || type === "mdia" || type === "minf" || type === "stbl" || type === "stsd" || 
-            type === "udta" || type === "meta" || type === "ilst" ||
-            type === "\xA9nam" || type === "\xA9ART" || type === "\xA9alb" || type === "\xA9day" || 
-            type === "trkn" || type === "\xA9gen" || type === "gnre" || type === "\xA9cmt" || 
-            type === "\xA9lyr" || type === "covr") {
-          
+        if (type === "moov" || type === "trak" || type === "mdia" || type === "minf" || type === "stbl" || type === "stsd" ||
+          type === "udta" || type === "meta" || type === "ilst" ||
+          type === "\xA9nam" || type === "\xA9ART" || type === "\xA9alb" || type === "\xA9day" ||
+          type === "trkn" || type === "\xA9gen" || type === "gnre" || type === "\xA9cmt" ||
+          type === "\xA9lyr" || type === "covr") {
+
           if (type === "moov") moovFound = true;
-          
+
           var offset = 0;
           if (type === "stsd") offset = 8; // Skip version/flags header for sample description nodes
           else if (type === "meta") offset = 4; // Skip the 4-byte FullBox flags specific to meta containers
-          
+
           scanBoxes(payloadPos + offset, payloadEnd, type);
-        } 
+        }
         // 2. PARSE EXPLICIT DATA ATOM PAYLOAD VALUES INSIDE ITUNES TAGS
         else if (type === "data" && parentType) {
           if (payloadPos + 8 <= payloadEnd) {
@@ -1841,22 +2217,21 @@
               else if (parentType === "\xA9gen") metadata.metadata.genre = textVal;
               else if (parentType === "\xA9cmt") metadata.metadata.comment = textVal;
               else if (parentType === "\xA9lyr") metadata.metadata.lyrics = textVal;
-            } 
-            else if (parentType === "trkn" && bodyBytes.length >= 4) {
+            } else if (parentType === "trkn" && bodyBytes.length >= 4) {
               // Binary structural unpack: bytes index 2-3 holds Track Num, index 4-5 holds Total Tracks
               var trackNum = (bodyBytes[2] << 8) | bodyBytes[3];
               var totalTracks = bodyBytes.length >= 6 ? (bodyBytes[4] << 8) | bodyBytes[5] : 0;
               metadata.metadata.track = totalTracks > 0 ? trackNum + "/" + totalTracks : String(trackNum);
-            } 
-            else if (parentType === "gnre" && bodyBytes.length >= 2) {
+            } else if (parentType === "gnre" && bodyBytes.length >= 2) {
               // Extract classic legacy ID3v1 genre short integers index
               var genreIdx = (bodyBytes[0] << 8) | bodyBytes[1];
               metadata.metadata.genre = String(genreIdx);
-            } 
-            else if (parentType === "covr") {
+            } else if (parentType === "covr") {
               // Map dynamic image codecs content type based on flags
               var mimeType = (dataFlag === 14) ? "image/png" : "image/jpeg";
-              metadata.metadata.imageBlob = new Blob([data.slice(bodyStart, payloadEnd)], { type: mimeType });
+              metadata.metadata.imageBlob = new Blob([data.slice(bodyStart, payloadEnd)], {
+                type: mimeType
+              });
             }
           }
         }
@@ -1871,13 +2246,13 @@
             durationTicks = (data[payloadPos + 28] << 24) | (data[payloadPos + 29] << 16) | (data[payloadPos + 30] << 8) | data[payloadPos + 31];
           }
           if (timescale > 0) metadata.duration = durationTicks / timescale;
-        } 
+        }
         // 4. EXTRACT AUDIO ENTRY SPECS (mp4a)
         else if (type === "mp4a") {
           metadata.channels = (data[payloadPos + 16] << 8) | data[payloadPos + 17];
           metadata.sampleRate = (data[payloadPos + 24] << 8) | data[payloadPos + 25];
           scanBoxes(payloadPos + 28, payloadEnd, parentType);
-        } 
+        }
         // 5. DEEP SCAN ELEMENTARY STREAMS FOR BITRATES (esds)
         else if (type === "esds") {
           var esdsPayload = payloadPos + 4;
@@ -1936,7 +2311,7 @@
     var channels = 0;
     var encoderDelay = 0;
     var lastGranulePos = 0;
-    
+
     var OPUS_MAPPING_RATE = 48000; // RFC 7845 forces Opus timelines to map to a 48kHz clock
 
     var metaTags = {
@@ -1959,7 +2334,11 @@
       }
       var s = "";
       for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
-      try { return decodeURIComponent(escape(s)).trim(); } catch (e) { return s.trim(); }
+      try {
+        return decodeURIComponent(escape(s)).trim();
+      } catch (e) {
+        return s.trim();
+      }
     }
 
     // Tiny embedded Base64 decoder to process standalone METADATA_BLOCK_PICTURE fields safely
@@ -1972,11 +2351,18 @@
         return out;
       }
       var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-      var bytes = []; var buffer = 0, bits = 0;
+      var bytes = [];
+      var buffer = 0,
+        bits = 0;
       for (var i = 0; i < b64.length; i++) {
-        var val = chars.indexOf(b64.charAt(i)); if (val < 0) continue;
-        buffer = (buffer << 6) | val; bits += 6;
-        if (bits >= 8) { bits -= 8; bytes.push((buffer >> bits) & 0xFF); }
+        var val = chars.indexOf(b64.charAt(i));
+        if (val < 0) continue;
+        buffer = (buffer << 6) | val;
+        bits += 6;
+        if (bits >= 8) {
+          bits -= 8;
+          bytes.push((buffer >> bits) & 0xFF);
+        }
       }
       return new Uint8Array(bytes);
     }
@@ -1985,22 +2371,27 @@
     function parsePictureBlock(picBytes) {
       if (picBytes.length < 32) return;
       var p = 0;
-      var picType = (picBytes[p] << 24) | (picBytes[p+1] << 16) | (picBytes[p+2] << 8) | picBytes[p+3]; p += 4;
-      var mimeLen = (picBytes[p] << 24) | (picBytes[p+1] << 16) | (picBytes[p+2] << 8) | picBytes[p+3]; p += 4;
+      var picType = (picBytes[p] << 24) | (picBytes[p + 1] << 16) | (picBytes[p + 2] << 8) | picBytes[p + 3];
+      p += 4;
+      var mimeLen = (picBytes[p] << 24) | (picBytes[p + 1] << 16) | (picBytes[p + 2] << 8) | picBytes[p + 3];
+      p += 4;
       if (p + mimeLen > picBytes.length) return;
-      
+
       var mimeStr = "";
       for (var m = 0; m < mimeLen; m++) mimeStr += String.fromCharCode(picBytes[p + m]);
       p += mimeLen;
 
-      var descLen = (picBytes[p] << 24) | (picBytes[p+1] << 16) | (picBytes[p+2] << 8) | picBytes[p+3];
+      var descLen = (picBytes[p] << 24) | (picBytes[p + 1] << 16) | (picBytes[p + 2] << 8) | picBytes[p + 3];
       p += 4 + descLen + 16; // Skip description string and channel block parameters
 
       if (p + 4 > picBytes.length) return;
-      var dataLen = (picBytes[p] << 24) | (picBytes[p+1] << 16) | (picBytes[p+2] << 8) | picBytes[p+3]; p += 4;
-      
+      var dataLen = (picBytes[p] << 24) | (picBytes[p + 1] << 16) | (picBytes[p + 2] << 8) | picBytes[p + 3];
+      p += 4;
+
       if (p + dataLen <= picBytes.length && picType === 3) { // Front cover capture target validation
-        metaTags.imageBlob = new Blob([picBytes.slice(p, p + dataLen)], { type: mimeStr || "image/jpeg" });
+        metaTags.imageBlob = new Blob([picBytes.slice(p, p + dataLen)], {
+          type: mimeStr || "image/jpeg"
+        });
       }
     }
 
@@ -2039,7 +2430,9 @@
           else if (key === "COMMENT") metaTags.comment = val;
           else if (key === "LYRICS") metaTags.lyrics = val;
           else if (key === "METADATA_BLOCK_PICTURE") {
-            try { parsePictureBlock(decodeBase64(val)); } catch (e) {}
+            try {
+              parsePictureBlock(decodeBase64(val));
+            } catch (e) {}
           }
         }
       }
@@ -2050,7 +2443,8 @@
     // ==================================================================
     while (pos + 27 <= len) {
       if (data[pos] !== 0x4F || data[pos + 1] !== 0x67 || data[pos + 2] !== 0x67 || data[pos + 3] !== 0x53) { // "OggS"
-        pos++; continue;
+        pos++;
+        continue;
       }
 
       var headerType = data[pos + 5];
@@ -2058,13 +2452,17 @@
       var granuleHigh = data[pos + 10] + (data[pos + 11] << 8) + (data[pos + 12] << 16) + (data[pos + 13] * 0x1000000);
       var granulePos = (granuleHigh * 0x100000000) + granuleLow;
 
-      if (granulePos > 0 && granulePos !== 0xFFFFFFFFFFFFFFFF) { lastGranulePos = granulePos; }
+      if (granulePos > 0 && granulePos !== 0xFFFFFFFFFFFFFFFF) {
+        lastGranulePos = granulePos;
+      }
 
       var pageSegments = data[pos + 26];
       if (pos + 27 + pageSegments > len) break;
 
       var pagePayloadSize = 0;
-      for (var i = 0; i < pageSegments; i++) { pagePayloadSize += data[pos + 27 + i]; }
+      for (var i = 0; i < pageSegments; i++) {
+        pagePayloadSize += data[pos + 27 + i];
+      }
 
       var payloadPos = pos + 27 + pageSegments;
       if (payloadPos + pagePayloadSize > len) break;
@@ -2078,22 +2476,27 @@
           var isVorbis = payloadBytes[0] === 0x01 && String.fromCharCode(payloadBytes[1], payloadBytes[2], payloadBytes[3], payloadBytes[4], payloadBytes[5], payloadBytes[6]) === "vorbis";
 
           if (isOpus) {
-            codec = "opus"; channels = payloadBytes[9];
+            codec = "opus";
+            channels = payloadBytes[9];
             encoderDelay = payloadBytes[10] + (payloadBytes[11] << 8);
             sampleRate = payloadBytes[12] + (payloadBytes[13] << 8) + (payloadBytes[14] << 16) + (payloadBytes[15] * 0x1000000);
           } else if (isVorbis) {
-            codec = "vorbis"; channels = payloadBytes[11];
+            codec = "vorbis";
+            channels = payloadBytes[11];
             sampleRate = payloadBytes[12] + (payloadBytes[13] << 8) + (payloadBytes[14] << 16) + (payloadBytes[15] * 0x1000000);
           }
         }
-      } 
+      }
       // B. Sniff and analyze inner Comment Packets (Subsequent Packet Nodes)
       else if (payloadBytes.length > 8) {
         var isOpusTags = String.fromCharCode(payloadBytes[0], payloadBytes[1], payloadBytes[2], payloadBytes[3], payloadBytes[4], payloadBytes[5], payloadBytes[6], payloadBytes[7]) === "OpusTags";
         var isVorbisComm = payloadBytes[0] === 0x03 && String.fromCharCode(payloadBytes[1], payloadBytes[2], payloadBytes[3], payloadBytes[4], payloadBytes[5], payloadBytes[6]) === "vorbis";
 
-        if (isOpusTags) { parseVorbisComments(payloadBytes, 8); }
-        else if (isVorbisComm) { parseVorbisComments(payloadBytes, 7); }
+        if (isOpusTags) {
+          parseVorbisComments(payloadBytes, 8);
+        } else if (isVorbisComm) {
+          parseVorbisComments(payloadBytes, 7);
+        }
       }
 
       pos = payloadPos + pagePayloadSize;
@@ -2102,8 +2505,11 @@
     if (!codec) return null;
 
     var duration = 0;
-    if (codec === "opus") { duration = lastGranulePos / OPUS_MAPPING_RATE; }
-    else if (codec === "vorbis" && sampleRate > 0) { duration = lastGranulePos / sampleRate; }
+    if (codec === "opus") {
+      duration = lastGranulePos / OPUS_MAPPING_RATE;
+    } else if (codec === "vorbis" && sampleRate > 0) {
+      duration = lastGranulePos / sampleRate;
+    }
 
     data = null;
     return {
@@ -2114,10 +2520,10 @@
       bitrate: duration > 0 ? Math.round(((len * 8) / duration) / 1000) : 0,
       duration: duration,
       encoderDelay: encoderDelay,
-      metadata: metaTags 
+      metadata: metaTags
     };
   }
-  
+
   /**
    * Low-level binary frame-walker for raw AAC files (ADTS Stream).
    * Extracts Sample Rate, Channels, Total Frames, and playback Duration.
@@ -2146,7 +2552,7 @@
     while (pos + 7 <= len) {
       // Look for the 12-bit Sync Word (0xFFF -> All first 11 bits set to 1)
       if (data[pos] === 0xFF && (data[pos + 1] & 0xF0) === 0xF0) {
-        
+
         if (!firstFrameParsed) {
           // Extract 4-bit Sampling Frequency Index from byte 2
           var srIdx = (data[pos + 2] & 0x3C) >> 2;
@@ -2158,16 +2564,16 @@
         }
 
         // Extract the critical 13-bit Frame Length (Includes the header size itself)
-        var frameLen = ((data[pos + 3] & 0x03) << 11) | 
-                       (data[pos + 4] << 3) | 
-                       ((data[pos + 5] & 0xE0) >> 5);
+        var frameLen = ((data[pos + 3] & 0x03) << 11) |
+          (data[pos + 4] << 3) |
+          ((data[pos + 5] & 0xE0) >> 5);
 
         // Safety check to prevent infinite loops on corrupted frames
         if (frameLen <= 0) {
           pos++;
           continue;
         }
-        
+
         totalFrames++;
         pos += frameLen; // Micro jump straight to the next adjacent ADTS frame boundary
       } else {
@@ -2191,10 +2597,10 @@
       totalFrames: totalFrames,
       duration: duration,
       // AAC standard internal decoder priming padding (typically 1024 or 2048 samples)
-      encoderDelay: 2048 
+      encoderDelay: 2048
     };
   };
-  
+
   /**
    * Comprehensive low-level streaminfo and metadata block parser for native FLAC containers.
    * Iterates through all available metadata blocks to unpack audio configuration metrics,
@@ -2257,7 +2663,7 @@
       var blockHeader = data[pos];
       isLastBlock = (blockHeader & 0x80) !== 0; // Top bitflags filter out the last metadata block checkpoint
       var blockType = blockHeader & 0x7F;
-      
+
       // Extract 24-bit Block Payload Size parameter (Big Endian sequence parsing)
       var blockSize = (data[pos + 1] << 16) | (data[pos + 2] << 8) | data[pos + 3];
       pos += 4; // Shift structural index past the 4-byte block header signature
@@ -2270,19 +2676,19 @@
       if (blockType === 0 && blockSize >= 34) {
         // Extract 20-bit Sample Rate from unaligned bitfields
         sampleRate = (data[pos + 10] << 12) | (data[pos + 11] << 4) | (data[pos + 12] >> 4);
-        
+
         // Extract 3-bit Channel configuration mapping parameters
         channels = ((data[pos + 12] & 0x0E) >> 1) + 1;
-        
+
         // Extract 5-bit Bits Per Sample (Bit Depth metric scaling calculation)
         bitDepth = (((data[pos + 12] & 0x01) << 4) | (data[pos + 13] >> 4)) + 1;
-        
+
         // Extract 36-bit Total Playback Samples count safely avoiding Javascript integer wraps
-        totalSamples = ((data[pos + 13] & 0x0F) * 0x100000000) + 
-                       (data[pos + 14] << 24) + 
-                       (data[pos + 15] << 16) + 
-                       (data[pos + 16] << 8) + 
-                       data[pos + 17];
+        totalSamples = ((data[pos + 13] & 0x0F) * 0x100000000) +
+          (data[pos + 14] << 24) +
+          (data[pos + 15] << 16) +
+          (data[pos + 16] << 8) +
+          data[pos + 17];
       }
       // BLOCK TYPE 4: Textual Tags Engine Container (VORBIS_COMMENT - LITTLE ENDIAN LOGIC)
       else if (blockType === 4 && blockSize >= 8) {
@@ -2299,7 +2705,7 @@
 
           for (var i = 0; i < numComments; i++) {
             if (ptr + 4 > payloadEnd) break;
-            
+
             var commentLength = data[ptr] | (data[ptr + 1] << 8) | (data[ptr + 2] << 16) | (data[ptr + 3] << 24);
             ptr += 4;
 
@@ -2353,7 +2759,9 @@
 
             if (ptr + dataLength <= payloadEnd && picType === 3) { // Only capture Cover (Front) image structures
               var imageBytes = data.slice(ptr, ptr + dataLength);
-              metaTags.imageBlob = new Blob([imageBytes], { type: mimeStr || "image/jpeg" });
+              metaTags.imageBlob = new Blob([imageBytes], {
+                type: mimeStr || "image/jpeg"
+              });
             }
           }
         }
@@ -2377,12 +2785,12 @@
       totalSamples: totalSamples,
       duration: duration,
       encoderDelay: 0,
-      
+
       // Comprehensive structural dictionary holding metadata parameters
-      metadata: metaTags 
+      metadata: metaTags
     };
   };
-  
+
   /**
    * Comprehensive low-level EBML structural parser for WebM and MKV (Matroska) containers.
    * Decodes track parameters, walks the 'Tags' elements array to extract full text tags,
@@ -2427,7 +2835,7 @@
     var timescale = 1000000; // Default Matroska timecode metric is 1,000,000 ns (1 ms)
     var durationTicks = 0;
     var codecId = "";
-    
+
     // State machine trackers for matching tag pairs and attachment file properties
     var currentTagName = "";
     var currentMimeType = "";
@@ -2436,30 +2844,46 @@
       if (p >= len) return null;
       var b = data[p];
       var lenBytes = 1;
-      while (lenBytes <= 8 && !(b & (0x80 >> (lenBytes - 1)))) { lenBytes++; }
+      while (lenBytes <= 8 && !(b & (0x80 >> (lenBytes - 1)))) {
+        lenBytes++;
+      }
       if (lenBytes > 8 || p + lenBytes > len) return null;
       var mask = 0x80 >> (lenBytes - 1);
       var val = b & (mask - 1);
-      for (var i = 1; i < lenBytes; i++) { val = (val * 256) + data[p + i]; }
-      return { value: val, bytes: lenBytes };
+      for (var i = 1; i < lenBytes; i++) {
+        val = (val * 256) + data[p + i];
+      }
+      return {
+        value: val,
+        bytes: lenBytes
+      };
     }
 
     function readId(p) {
       if (p >= len) return null;
       var b = data[p];
       var lenBytes = 1;
-      while (lenBytes <= 4 && !(b & (0x80 >> (lenBytes - 1)))) { lenBytes++; }
+      while (lenBytes <= 4 && !(b & (0x80 >> (lenBytes - 1)))) {
+        lenBytes++;
+      }
       if (lenBytes > 4 || p + lenBytes > len) return null;
       var id = 0;
-      for (var i = 0; i < lenBytes; i++) { id = (id * 256) + data[p + i]; }
-      return { value: id, bytes: lenBytes };
+      for (var i = 0; i < lenBytes; i++) {
+        id = (id * 256) + data[p + i];
+      }
+      return {
+        value: id,
+        bytes: lenBytes
+      };
     }
 
     function readFloat(p, size) {
       if (p + size > len) return 0;
       var buf = new ArrayBuffer(size);
       var view = new DataView(buf);
-      for (var i = 0; i < size; i++) { view.setUint8(i, data[p + i]); }
+      for (var i = 0; i < size; i++) {
+        view.setUint8(i, data[p + i]);
+      }
       return size === 4 ? view.getFloat32(0, false) : view.getFloat64(0, false);
     }
 
@@ -2476,8 +2900,12 @@
     function walk(start, end) {
       var p = start;
       while (p < end) {
-        var idRes = readId(p); if (!idRes) break; p += idRes.bytes;
-        var sizeRes = readVint(p); if (!sizeRes) break; p += sizeRes.bytes;
+        var idRes = readId(p);
+        if (!idRes) break;
+        p += idRes.bytes;
+        var sizeRes = readVint(p);
+        if (!sizeRes) break;
+        p += sizeRes.bytes;
 
         var id = idRes.value;
         var size = sizeRes.value;
@@ -2485,15 +2913,15 @@
 
         // MASTER CONTAINERS: Deep dive recursions
         if (id === 0x18538067 || // Segment
-            id === 0x1549A966 || // Segment Info
-            id === 0x1654AE6B || // Tracks
-            id === 0xAE       || // TrackEntry
-            id === 0xE1       || // Audio
-            id === 0x1254C367 || // Tags Container
-            id === 0x7373     || // Tag Entry
-            id === 0x67C8     || // SimpleTag Container
-            id === 0x1941A142 || // Attachments Container
-            id === 0x61A7)       // AttachedFile Entry
+          id === 0x1549A966 || // Segment Info
+          id === 0x1654AE6B || // Tracks
+          id === 0xAE || // TrackEntry
+          id === 0xE1 || // Audio
+          id === 0x1254C367 || // Tags Container
+          id === 0x7373 || // Tag Entry
+          id === 0x67C8 || // SimpleTag Container
+          id === 0x1941A142 || // Attachments Container
+          id === 0x61A7) // AttachedFile Entry
         {
           walk(p, Math.min(nextPos, end));
         }
@@ -2546,12 +2974,15 @@
           // Verify mime format constraints to prevent grabbing secondary document attachments
           if (currentMimeType.indexOf("image/") === 0 || !currentMimeType) {
             var imageBytes = data.slice(p, p + size);
-            metadata.metadata.imageBlob = new Blob([imageBytes], { type: currentMimeType || "image/jpeg" });
+            metadata.metadata.imageBlob = new Blob([imageBytes], {
+              type: currentMimeType || "image/jpeg"
+            });
           }
         }
         // PERFORMANCE PERFORMANCE OPTIMIZATION: Safely hop past massive payload clusters (0x1F43B675)
         else if (id === 0x1F43B675) {
-          p = nextPos; continue;
+          p = nextPos;
+          continue;
         }
         p = nextPos;
       }
@@ -2577,7 +3008,7 @@
   function parseMkvHeader(mkvSource, typeHint) {
     return parseWebmHeader(mkvSource, typeHint);
   }
-  
+
   /**
    * SuperPCM.parseHeader (Modern Extension-Agnostic Edition)
    * Centralized audio router engineered to be fully immune to extension spoofing.
@@ -2587,7 +3018,7 @@
    * @param {String} typeHint - Mislabeled or trusted file extension / MIME type string
    * @returns {Object|null} Technical metadata payload with explicit spoofing verification flags
    */
-  SuperPCM.parseHeader = function (source, typeHint) {
+  SuperPCM.parseHeader = function(source, typeHint) {
     if (!source) return null;
     var data = source instanceof Uint8Array ? source : new Uint8Array(source);
     var len = data.length;
@@ -2643,12 +3074,12 @@
     // If magic bytes were unaligned or absent (like raw CBR MP3 or raw ADTS streams), 
     // execute sequential deep parsing verification before giving up.
     if (!result) {
-      result = parseMp3Header(data) || 
-               parseAacHeader(data) || 
-               parseM4aHeader(data) || 
-               parseOggHeader(data) || 
-               parseWebmHeader(data, hint) || 
-               parseFlacHeader(data);
+      result = parseMp3Header(data) ||
+        parseAacHeader(data) ||
+        parseM4aHeader(data) ||
+        parseOggHeader(data) ||
+        parseWebmHeader(data, hint) ||
+        parseFlacHeader(data);
     }
 
     // ==================================================================
@@ -2656,26 +3087,26 @@
     // ==================================================================
     if (result) {
       result.id3SizeOffset = id3SizeOffset; // Preserve historical skip metric mapping
-      
+
       if (hint && hint !== "") {
         // Isolate root name architecture string (e.g., "aac/m4a" -> "aac", "ogg/opus" -> "ogg")
         var rootFormatName = result.audioFormat.split('/')[0];
-        
+
         var isMatched = false;
-        
+
         // 1. Direct matching condition (e.g., "flac" inside ".flac")
         if (hint.indexOf(rootFormatName) !== -1) {
           isMatched = true;
-        } 
+        }
         // 2. Container mapping rules for MP4/M4A family holding AAC bitstreams
         else if (rootFormatName === "aac" && (hint.indexOf("m4a") !== -1 || hint.indexOf("mp4") !== -1)) {
           isMatched = true;
-        } 
+        }
         // 3. Wrapper mapping rules for MP3 streams inside MPEG headers
         else if (rootFormatName === "mp3" && hint.indexOf("mpeg") !== -1) {
           isMatched = true;
         }
-        
+
         // Safe trigger validation
         result.isExtensionMismatched = !isMatched;
       } else {
@@ -2685,12 +3116,12 @@
 
     return result; // Safe structured return payload or null if totally corrupt
   };
-  
+
   /** For MP3 **/
   function detectPhysicalGaps(pcm, format, options) {
     options = options || {};
     var threshold = options.threshold !== undefined ? options.threshold : 0.001;
-    
+
     if (format.bitrate && format.bitrate > 0) {
       if (format.bitrate <= 32) {
         threshold = 0.025; // High-compression codec hiss allowance threshold
@@ -2700,7 +3131,7 @@
         threshold = 0.003; // Low-bandwidth optimization ceiling
       }
     }
-    
+
     var bitDepth = format.bitDepth || 16;
     var isFloat = !!format.float;
     var channels = format.channels || 2;
@@ -2750,12 +3181,12 @@
     // 3. Heuristic Profile Snapping Logic (Snaps rough threshold values to precise encoder footprints)
     var finalDelay = delayFrames;
     if (sampleRate >= 32000) { // MPEG-1 Tier
-      if (Math.abs(delayFrames - 528) <= 40) finalDelay = 528;       // Fraunhofer IIS Profile
+      if (Math.abs(delayFrames - 528) <= 40) finalDelay = 528; // Fraunhofer IIS Profile
       else if (Math.abs(delayFrames - 1104) <= 40) finalDelay = 1104; // LAME Standard Profile
       else if (Math.abs(delayFrames - 1160) <= 40) finalDelay = 1160; // LAME Joint-Stereo Low-bitrate Profile
-      else if (delayFrames === 0) finalDelay = 1105;                 // Fallback anchor standard
+      else if (delayFrames === 0) finalDelay = 1105; // Fallback anchor standard
     } else { // MPEG-2 / MPEG-2.5 Tier
-      if (Math.abs(delayFrames - 576) <= 30) finalDelay = 576;       // Low-frequency Standard Profile
+      if (Math.abs(delayFrames - 576) <= 30) finalDelay = 576; // Low-frequency Standard Profile
     }
 
     return {
@@ -2766,7 +3197,7 @@
       totalFrames: totalFrames
     };
   };
-  
+
   /**
    * Detects audio/video MIME type based on Magic Bytes (first 12 bytes)
    * @param {Uint8Array} uint8Array - Binary array containing at least the first 12 bytes of the file
@@ -2774,63 +3205,63 @@
    */
   function mediaMagicBytesToMimeType(uint8Array) {
     // Helper to convert a subarray of bytes into a spaced Hex string (e.g., "52 49 46 46")
-    var getHex = function (arr, start, end) {
+    var getHex = function(arr, start, end) {
       return Array.from(arr.slice(start, end))
-      .map(b => b.toString(16).toUpperCase().padStart(2, '0'))
-      .join(' ');
+        .map(b => b.toString(16).toUpperCase().padStart(2, '0'))
+        .join(' ');
     }
-  
+
     // Extract hex patterns at crucial positions
     var hexFirst4 = getHex(uint8Array, 0, 4);
     var hexFirst3 = getHex(uint8Array, 0, 3);
     var hexOffset4to8 = getHex(uint8Array, 4, 8);
     var hexOffset8to12 = getHex(uint8Array, 8, 12);
     uint8Array = null;
-    
+
     // --- DETECTION LOGIC ---
-  
+
     // 1. WAV & AVI formats (Both utilize the RIFF container)
     if (hexFirst4 === '52 49 46 46') { // 'RIFF'
-      if (hexOffset8to12 === '57 41 56 45') return 'audio/wav';  // 'WAVE'
+      if (hexOffset8to12 === '57 41 56 45') return 'audio/wav'; // 'WAVE'
       if (hexOffset8to12 === '41 56 49 20') return 'video/x-msvideo'; // 'AVI '
     }
-  
+
     // 2. MP3 (Usually begins with the ID3v2 metadata tag 'ID3')
-    if (hexFirst3 === '49 44 33') { 
+    if (hexFirst3 === '49 44 33') {
       return 'audio/mpeg';
     }
-  
+
     // 3. FLAC
     if (hexFirst4 === '46 4C 41 43') { // 'fLaC'
       return 'audio/flac';
     }
-  
+
     // 4. OGG (Can be `.ogg` audio or `.oga`)
     if (hexFirst4 === '4F 67 67 53') { // 'OggS'
-      return 'audio/ogg'; 
+      return 'audio/ogg';
     }
-  
+
     // 5. MP4 (Looks for the 'ftyp' container marker at byte offset 4-8)
     if (hexOffset4to8 === '66 74 79 70') { // 'ftyp'
       return 'video/mp4';
     }
-  
+
     // 6. MKV / WebM (EBML header)
     if (hexFirst4 === '1A 45 DF A3') {
       // WebM and MKV containers share a similar initial structure; defaulting to matroska
-      return 'video/x-matroska'; 
+      return 'video/x-matroska';
     }
-  
+
     // Fallback to a generic binary type if no signatures match
     return 'application/octet-stream';
   }
-  
+
   /**
    * Get audio source and converts to PCM data.
    */
   function audioSource() {
     var xhr = new XMLHttpRequest(),
-    _this = this;
+      _this = this;
 
     this.src = "";
     this.headers = {};
@@ -2846,7 +3277,7 @@
       if (_this.onSuccess && typeof _this.onSuccess == "function") {
         _this.onSuccess({
           sampleRate: fmt.sampleRate,
-          bitDepth: fmt.float ? SuperPCM.BIT_DEPTH_32: fmt.bitDepth,
+          bitDepth: fmt.float ? SuperPCM.BIT_DEPTH_32 : fmt.bitDepth,
           float: fmt.float,
           channels: fmt.channels,
           data: pcm,
@@ -2854,8 +3285,9 @@
         });
       }
     }
-    
-    var contentType = "", response = null;
+
+    var contentType = "",
+      response = null;
     var loadSource = function() {
       var processPCM = function() {
         if (!contentType && response) {
@@ -2865,38 +3297,49 @@
         if (/audio\/|video\//i.test(contentType) && !/midi/i.test(contentType)) {
           var byteHeader = new Uint8Array(response, 0, 4);
           var isWav = (byteHeader[0] === 0x52 && byteHeader[1] === 0x49 && byteHeader[2] === 0x46 && byteHeader[3] === 0x46);
-  
+
           if (/audio\/wav/i.test(contentType) || isWav) {
-            SuperPCM.wavToPCM(response).then(function (info) {
+            SuperPCM.wavToPCM(response).then(function(info) {
               var fmt = info.format;
-              _this.headerInfo = { audioFormat: "wav", ...fmt };
+              _this.headerInfo = {
+                audioFormat: "wav",
+                ...fmt
+              };
               generate(info.pcm, fmt);
-            }).catch(function (err) {
+            }).catch(function(err) {
               console.error('Error decoding WAV file:', err);
               if (_this.onError && typeof _this.onError == "function") _this.onError(err);
             });
-              
+
             byteHeader = null;
             isWav = null;
           } else if (/audio\/x\-eac/i.test(contentType)) {
-            SuperPCM.eacToPCM(response).then(function (info) {
-            var fmt = info.format;
-              _this.headerInfo = { audioFormat: "eac", ...fmt };
+            SuperPCM.eacToPCM(response).then(function(info) {
+              var fmt = info.format;
+              _this.headerInfo = {
+                audioFormat: "eac",
+                ...fmt
+              };
               generate(info.pcm, fmt);
-            }).catch(function (err) {
+            }).catch(function(err) {
               console.error('Error decoding EAC file:', err);
               if (_this.onError && typeof _this.onError == "function") _this.onError(err);
             });
           } else {
             _this.headerInfo = SuperPCM.parseHeader(response, _this.src);
-            
+
             var sampleRate = _this.headerInfo && _this.headerInfo.sampleRate ? _this.headerInfo.sampleRate : 48000,
-            bitDepth = _this.headerInfo && _this.headerInfo.bitDepth ? _this.headerInfo.bitDepth : 16;
+              bitDepth = _this.headerInfo && _this.headerInfo.bitDepth ? _this.headerInfo.bitDepth : 16;
             var audioContext = SuperPCM.audioCtx(sampleRate);
             audioContext.decodeAudioData(response, function(audioBuffer) {
-              SuperPCM.audioBufferToPCM(audioBuffer, { bitDepth: bitDepth, float: false }).then(function(pcm) {
+              SuperPCM.audioBufferToPCM(audioBuffer, {
+                bitDepth: bitDepth,
+                float: false
+              }).then(function(pcm) {
                 if (_this.headerInfo && ((_this.headerInfo.audioFormat === "mp3" && !_this.headerInfo.hasLameTag) || _this.headerInfo.audioFormat === "aac/adts")) {
-                  var encoderDelay = _this.headerInfo.encoderDelay, encoderPadding = _this.headerInfo.encoderPadding, totalFrames;
+                  var encoderDelay = _this.headerInfo.encoderDelay,
+                    encoderPadding = _this.headerInfo.encoderPadding,
+                    totalFrames;
                   if (_this.headerInfo.audioFormat === "mp3") {
                     var gaps = detectPhysicalGaps(pcm, {
                       bitDepth: 16,
@@ -2908,10 +3351,17 @@
                     encoderDelay = _this.headerInfo.encoderDelay = gaps.encoderDelay;
                     encoderPadding = _this.headerInfo.encoderPadding = gaps.encoderPadding;
                     totalFrames = gaps.totalFrames;
-                    
+
                     gaps = null;
                   }
-                  pcm = SuperPCM.Cut(pcm, { channels: audioBuffer.numberOfChannels, bitDepth: 16, float: false }, { start: encoderDelay, end: totalFrames != null ? totalFrames - encoderPadding : undefined });
+                  pcm = SuperPCM.Cut(pcm, {
+                    channels: audioBuffer.numberOfChannels,
+                    bitDepth: 16,
+                    float: false
+                  }, {
+                    start: encoderDelay,
+                    end: totalFrames != null ? totalFrames - encoderPadding : undefined
+                  });
                 }
                 generate(pcm, {
                   sampleRate: sampleRate,
@@ -2919,7 +3369,7 @@
                   float: false,
                   channels: audioBuffer.numberOfChannels,
                 });
-  
+
                 audioContext.close();
                 audioContext = null;
               });
@@ -2929,10 +3379,13 @@
             });
           }
         } else {
-          _this.headerInfo = { audioFormat: "raw", ..._this.nonMediaFormat };
+          _this.headerInfo = {
+            audioFormat: "raw",
+            ..._this.nonMediaFormat
+          };
           generate(new Uint8Array(response), _this.nonMediaFormat);
         }
-        
+
         processPCM = null;
         response = null;
         contentType = null;
@@ -2940,7 +3393,7 @@
 
       if (_this.src instanceof Blob) {
         contentType = _this.src.type;
-        _this.src.arrayBuffer().then(function (buffer) {
+        _this.src.arrayBuffer().then(function(buffer) {
           response = buffer;
           processPCM();
         }).catch(function(err) {
@@ -2950,9 +3403,9 @@
         response = _this.src;
         processPCM();
       } else if (_this.src instanceof Uint8Array) {
-        response = (_this.src.byteOffset === 0 && _this.src.byteLength === _this.src.buffer.byteLength)
-          ? _this.src.buffer
-          : _this.src.buffer.subarray(_this.src.byteOffset, _this.src.byteOffset + _this.src.byteLength);
+        response = (_this.src.byteOffset === 0 && _this.src.byteLength === _this.src.buffer.byteLength) ?
+          _this.src.buffer :
+          _this.src.buffer.subarray(_this.src.byteOffset, _this.src.byteOffset + _this.src.byteLength);
         processPCM();
       } else if (typeof _this.src === "string") {
         response = xhr.response;
@@ -2960,8 +3413,8 @@
         processPCM();
       }
     };
-    
-    xhr.onload = function () {
+
+    xhr.onload = function() {
       if (xhr.status !== 200 && xhr.status !== 0) {
         var err = {
           message: `Failed to load this file: ${xhr.status} ${xhr.statusText}`,
@@ -2973,7 +3426,7 @@
         loadSource();
       }
     }
-    xhr.onerror = function () {
+    xhr.onerror = function() {
       var err = {
         message: `XMLHttpRequest error while loading this file: ${_this.src}`,
         src: _this.src
@@ -2982,7 +3435,7 @@
       if (_this.onError && typeof _this.onError == "function") _this.onError(err);
     };
 
-    this.start = function () {
+    this.start = function() {
       if (this.src instanceof Blob || this.src instanceof ArrayBuffer || this.src instanceof Uint8Array) {
         loadSource();
       } else if (typeof this.src === "string") {
@@ -2996,7 +3449,7 @@
         xhr.send();
       }
     }
-    this.abort = function () {
+    this.abort = function() {
       xhr.abort();
     }
 
@@ -3005,9 +3458,9 @@
   }
 
   /**
-  * Get amplitudo
-  * Supports many interpolation amplitudo
-  */
+   * Get amplitudo
+   * Supports many interpolation amplitudo
+   */
   function fetchRawSample(pcm, off, channels, channel, bytesPerSample, bitDepth, float, dv, ratio) {
     var offFloor = Math.floor(off);
     var frameStride = bytesPerSample * channels;
@@ -3016,9 +3469,9 @@
     if (byteIndex >= 0 && byteIndex < pcm.length) {
       if (ratio > 1) {
         var bi0 = byteIndex,
-        bi1 = byteIndex + frameStride;
+          bi1 = byteIndex + frameStride;
         var s0 = getSample(pcm, dv, bi0, bitDepth, float),
-        s1 = getSample(pcm, dv, bi1 < pcm.length ? bi1: bi0, bitDepth, float);
+          s1 = getSample(pcm, dv, bi1 < pcm.length ? bi1 : bi0, bitDepth, float);
         var t = off - offFloor;
 
         return s0 + (s1 - s0) * t;
@@ -3027,46 +3480,46 @@
 
     return 0;
   }
-  
+
   function besselI0(x) {
     var sum = 1;
     var y = x * x / 4;
     var t = 1;
-  
+
     for (var i = 1; i <= 12; i++) {
       t *= y / (i * i);
       sum += t;
     }
-  
+
     return sum;
   }
-  
+
   function kaiserWindow(x, radius, beta) {
     if (Math.abs(x) > radius) return 0;
-  
+
     var r = x / radius;
     return besselI0(beta * Math.sqrt(1 - r * r)) / besselI0(beta);
   }
-  
+
   function sincKernel(x) {
     if (x === 0) return 1;
     var px = Math.PI * x;
     return Math.sin(px) / px;
   }
-  
+
   SuperPCM.getAmplitudo = function(pcm, offset, channels, channel, bitDepth, float, interpolationMode, dv, ratio) {
     var bytesPerSample = getBytesPerSample(bitDepth, float);
     var totalFrames = Math.floor(pcm.length / (bytesPerSample * channels));
     interpolationMode = interpolationMode || SuperPCM.interpolationMode;
     ratio = Math.max(1, ratio ?? 1);
-  
+
     if (!dv && (float || bitDepth === SuperPCM.BIT_DEPTH_16 || bitDepth === SuperPCM.BIT_DEPTH_32)) {
       dv = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
     }
-  
+
     var rOffset = Math.floor(offset / ratio) * ratio;
     var t = (offset - rOffset) / ratio;
-  
+
     // ==================================================================
     // BRANCH 1: STANDARD 4-POINT INTERPOLATORS
     // ==================================================================
@@ -3078,10 +3531,10 @@
       interpolationMode === "mitchell"
     ) {
       var s_1 = fetchRawSample(pcm, rOffset - ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-      var s0  = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-      var s1  = fetchRawSample(pcm, rOffset + ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-      var s2  = fetchRawSample(pcm, rOffset + ratio * 2, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-  
+      var s0 = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var s1 = fetchRawSample(pcm, rOffset + ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var s2 = fetchRawSample(pcm, rOffset + ratio * 2, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+
       if (interpolationMode === "bspline") {
         var b0 = (1 - t) * (1 - t) * (1 - t) / 6;
         var b1 = (3 * t * t * t - 6 * t * t + 4) / 6;
@@ -3089,114 +3542,115 @@
         var b3 = t * t * t / 6;
         return b0 * s_1 + b1 * s0 + b2 * s1 + b3 * s2;
       }
-  
+
       if (interpolationMode === "mitchell") {
         var B = 1 / 3;
         var C = 1 / 3;
-  
+
         function mitchellWeight(x) {
           x = Math.abs(x);
           var x2 = x * x;
           var x3 = x2 * x;
-  
+
           if (x < 1) {
             return ((12 - 9 * B - 6 * C) * x3 +
-                    (-18 + 12 * B + 6 * C) * x2 +
-                    (6 - 2 * B)) / 6;
+              (-18 + 12 * B + 6 * C) * x2 +
+              (6 - 2 * B)) / 6;
           }
-  
+
           if (x < 2) {
             return ((-B - 6 * C) * x3 +
-                    (6 * B + 30 * C) * x2 +
-                    (-12 * B - 48 * C) * x +
-                    (8 * B + 24 * C)) / 6;
+              (6 * B + 30 * C) * x2 +
+              (-12 * B - 48 * C) * x +
+              (8 * B + 24 * C)) / 6;
           }
-  
+
           return 0;
         }
-  
+
         var mw0 = mitchellWeight(t + 1);
         var mw1 = mitchellWeight(t);
         var mw2 = mitchellWeight(1 - t);
         var mw3 = mitchellWeight(2 - t);
         var mwSum = mw0 + mw1 + mw2 + mw3;
-  
-        return mwSum !== 0
-          ? (s_1 * mw0 + s0 * mw1 + s1 * mw2 + s2 * mw3) / mwSum
-          : s0;
+
+        return mwSum !== 0 ?
+          (s_1 * mw0 + s0 * mw1 + s1 * mw2 + s2 * mw3) / mwSum :
+          s0;
       }
-  
+
       // cubic, hermite, catmullrom
       var k0 = -0.5 * s_1 + 1.5 * s0 - 1.5 * s1 + 0.5 * s2;
       var k1 = s_1 - 2.5 * s0 + 2.0 * s1 - 0.5 * s2;
       var k2 = -0.5 * s_1 + 0.5 * s1;
       var k3 = s0;
-  
+
       return ((k0 * t + k1) * t + k2) * t + k3;
     }
-  
+
     // ==================================================================
     // BRANCH 2: AKIMA SUB-SPLINE
     // ==================================================================
     else if (interpolationMode === "akima") {
       var a_2 = fetchRawSample(pcm, rOffset - ratio * 2, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
       var a_1 = fetchRawSample(pcm, rOffset - ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-      var a0  = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-      var a1  = fetchRawSample(pcm, rOffset + ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-      var a2  = fetchRawSample(pcm, rOffset + ratio * 2, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-      var a3  = fetchRawSample(pcm, rOffset + ratio * 3, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-  
+      var a0 = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var a1 = fetchRawSample(pcm, rOffset + ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var a2 = fetchRawSample(pcm, rOffset + ratio * 2, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var a3 = fetchRawSample(pcm, rOffset + ratio * 3, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+
       var m1 = a_1 - a_2;
       var m2 = a0 - a_1;
       var m3 = a1 - a0;
       var m4 = a2 - a1;
       var m5 = a3 - a2;
-  
+
       var w1 = Math.abs(m4 - m3);
       var w2 = Math.abs(m2 - m1);
       var t1 = (w1 + w2 > 0) ? (w1 * m2 + w2 * m3) / (w1 + w2) : 0.5 * (m2 + m3);
-  
+
       var w3 = Math.abs(m5 - m4);
       var w4 = Math.abs(m3 - m2);
       var t2 = (w3 + w4 > 0) ? (w3 * m3 + w4 * m4) / (w3 + w4) : 0.5 * (m3 + m4);
-  
+
       var c0 = a0;
       var c1 = t1;
       var c2 = 3 * m3 - 2 * t1 - t2;
       var c3 = t1 + t2 - 2 * m3;
-  
+
       return ((c3 * t + c2) * t + c1) * t + c0;
     }
-  
+
     // ==================================================================
     // BRANCH 3: LANCZOS-3 SINC FILTER
     // ==================================================================
     else if (interpolationMode === "lanczos3") {
-      var sum = 0, weightSum = 0;
-  
+      var sum = 0,
+        weightSum = 0;
+
       for (var g = -2; g <= 3; g++) {
         var samplePos = rOffset + g * ratio;
         if (samplePos < 0) samplePos = 0;
         if (samplePos >= totalFrames * ratio) samplePos = (totalFrames - 1) * ratio;
-  
+
         var sampleVal = fetchRawSample(pcm, samplePos, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
         var x = t - g;
         var weight = 0;
-  
+
         if (x === 0) {
           weight = 1;
         } else if (x > -3 && x < 3) {
           var piX = Math.PI * x;
           weight = (Math.sin(piX) / piX) * (Math.sin(piX / 3) / (piX / 3));
         }
-  
+
         sum += sampleVal * weight;
         weightSum += weight;
       }
-  
+
       return weightSum !== 0 ? sum / weightSum : 0;
     }
-  
+
     // ==================================================================
     // BRANCH 4: KAISER WINDOWED SINC FILTER
     // ==================================================================
@@ -3205,23 +3659,23 @@
       var weightSum = 0;
       var radius = 6;
       var beta = 8.6;
-  
+
       for (var g = -radius + 1; g <= radius; g++) {
         var samplePos = rOffset + g * ratio;
         if (samplePos < 0) samplePos = 0;
         if (samplePos >= totalFrames * ratio) samplePos = (totalFrames - 1) * ratio;
-  
+
         var sampleVal = fetchRawSample(pcm, samplePos, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
         var x = t - g;
         var weight = sincKernel(x) * kaiserWindow(x, radius, beta);
-  
+
         sum += sampleVal * weight;
         weightSum += weight;
       }
-  
+
       return weightSum !== 0 ? sum / weightSum : 0;
     }
-  
+
     // ==================================================================
     // BRANCH 5: BLACKMAN WINDOWED SINC FILTER
     // ==================================================================
@@ -3229,30 +3683,30 @@
       var sum = 0;
       var weightSum = 0;
       var radius = 6;
-  
+
       for (var g = -radius + 1; g <= radius; g++) {
         var samplePos = rOffset + g * ratio;
         if (samplePos < 0) samplePos = 0;
         if (samplePos >= totalFrames * ratio) samplePos = (totalFrames - 1) * ratio;
-  
+
         var sampleVal = fetchRawSample(pcm, samplePos, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
         var x = t - g;
         var ax = Math.abs(x);
-  
+
         var weight = 0;
         if (ax <= radius) {
           var n = (x + radius) / (2 * radius);
           var blackman = 0.42 - 0.5 * Math.cos(2 * Math.PI * n) + 0.08 * Math.cos(4 * Math.PI * n);
           weight = sincKernel(x) * blackman;
         }
-  
+
         sum += sampleVal * weight;
         weightSum += weight;
       }
-  
+
       return weightSum !== 0 ? sum / weightSum : 0;
     }
-  
+
     // ==================================================================
     // BRANCH 6: GAUSSIAN FILTER
     // ==================================================================
@@ -3261,77 +3715,71 @@
       var weightSum = 0;
       var radius = 4;
       var sigma = 1.2;
-  
+
       for (var g = -radius; g <= radius; g++) {
         var samplePos = rOffset + g * ratio;
         if (samplePos < 0) samplePos = 0;
         if (samplePos >= totalFrames * ratio) samplePos = (totalFrames - 1) * ratio;
-  
+
         var sampleVal = fetchRawSample(pcm, samplePos, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
         var x = t - g;
         var weight = Math.exp(-(x * x) / (2 * sigma * sigma));
-  
+
         sum += sampleVal * weight;
         weightSum += weight;
       }
-  
+
       return weightSum !== 0 ? sum / weightSum : 0;
     }
-  
+
     // ==================================================================
     // BRANCH 7: LIGHTWEIGHT LOW-ORDER KERNELS
     // ==================================================================
     else if (interpolationMode === "quadratic") {
       var q_1 = fetchRawSample(pcm, rOffset - ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-      var q0  = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-      var q1  = fetchRawSample(pcm, rOffset + ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-  
+      var q0 = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+      var q1 = fetchRawSample(pcm, rOffset + ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
+
       var qA = 0.5 * (q1 + q_1) - q0;
       var qB = 0.5 * (q1 - q_1);
-  
+
       return (qA * t + qB) * t + q0;
-    }
-  
-    else if (interpolationMode === "cosine") {
+    } else if (interpolationMode === "cosine") {
       var c0 = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
       var c1 = fetchRawSample(pcm, rOffset + ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
       var mu2 = (1 - Math.cos(t * Math.PI)) * 0.5;
-  
+
       return c0 * (1 - mu2) + c1 * mu2;
-    }
-  
-    else if (interpolationMode === "linear") {
+    } else if (interpolationMode === "linear") {
       var l0 = fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
       var l1 = fetchRawSample(pcm, rOffset + ratio, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
-  
+
       return l0 + (l1 - l0) * t;
-    }
-  
-    else if (interpolationMode === "sinc" || interpolationMode === "lanczos") {
+    } else if (interpolationMode === "sinc" || interpolationMode === "lanczos") {
       var sum = 0;
       var weightSum = 0;
       var radius = 4;
-  
+
       for (var g = -radius + 1; g <= radius; g++) {
         var samplePos = rOffset + g * ratio;
         if (samplePos < 0) samplePos = 0;
         if (samplePos >= totalFrames * ratio) samplePos = (totalFrames - 1) * ratio;
-  
+
         var sampleVal = fetchRawSample(pcm, samplePos, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
         var x = t - g;
         var weight = sincKernel(x);
-  
+
         if (interpolationMode === "lanczos") {
           weight *= sincKernel(x / radius);
         }
-  
+
         sum += sampleVal * weight;
         weightSum += weight;
       }
-  
+
       return weightSum !== 0 ? sum / weightSum : 0;
     }
-  
+
     // step / zoh / fallback
     return fetchRawSample(pcm, rOffset, channels, channel, bytesPerSample, bitDepth, float, dv, ratio);
   }
@@ -3340,8 +3788,8 @@
    * AudioBuffer -> PCM (Uint8Array, interleaved)
    * ------------------------------------------------------------------ */
 
-  SuperPCM.audioBufferToPCM = function (audioBuffer, options) {
-    var cfg = assignDefaults( {
+  SuperPCM.audioBufferToPCM = function(audioBuffer, options) {
+    var cfg = assignDefaults({
       bitDepth: SuperPCM.defaults.bitDepth,
       float: SuperPCM.defaults.float
     }, options || {});
@@ -3376,8 +3824,8 @@
    * PCM (Uint8Array, interleaved) -> AudioBuffer
    * ------------------------------------------------------------------ */
 
-  SuperPCM.pcmToAudioBuffer = function (pcm, options) {
-    var cfg = assignDefaults( {
+  SuperPCM.pcmToAudioBuffer = function(pcm, options) {
+    var cfg = assignDefaults({
       sampleRate: SuperPCM.defaults.sampleRate,
       channels: SuperPCM.defaults.channels,
       bitDepth: SuperPCM.defaults.bitDepth,
@@ -3387,7 +3835,7 @@
     var bitDepth = cfg.bitDepth;
     var isFloat = !!cfg.float;
 
-    var bytes = pcm instanceof Uint8Array ? pcm: new Uint8Array(pcm);
+    var bytes = pcm instanceof Uint8Array ? pcm : new Uint8Array(pcm);
     var bytesPerSample = getBytesPerSample(bitDepth, isFloat);
     var frameSize = bytesPerSample * cfg.channels;
 
@@ -3398,7 +3846,7 @@
     var frames = Math.floor(bytes.length / frameSize);
 
     // Modern browsers support constructing AudioBuffer directly.
-    var audioBuffer = new AudioBuffer( {
+    var audioBuffer = new AudioBuffer({
       length: frames,
       sampleRate: cfg.sampleRate,
       numberOfChannels: cfg.channels
@@ -3419,10 +3867,10 @@
   };
 
   /**
-  * Converts PCM data to a WAV Blob. (Supports Linear PCM and IMA ADPCM)
-  */
-  SuperPCM.pcmToWavBlob = function (pcm, options) {
-    var cfg = assignDefaults( {
+   * Converts PCM data to a WAV Blob. (Supports Linear PCM and IMA ADPCM)
+   */
+  SuperPCM.pcmToWavBlob = function(pcm, options) {
+    var cfg = assignDefaults({
       sampleRate: SuperPCM.defaults.sampleRate,
       channels: SuperPCM.defaults.channels,
       bitDepth: SuperPCM.defaults.bitDepth,
@@ -3430,22 +3878,27 @@
       adpcm: false,
       adpcmBlockSize: null,
       adpcmBits: 4,
-      adpcmJointStereo: false
+      adpcmJointStereo: false,
+      adpcmType: "ima", // "ima" or "ms"
+      msAdpcmCoefficients: null
     }, options || {});
-    
+
     var header = [];
+
     function writeString(s) {
       for (var i = 0; i < s.length; i++) {
         header.push(s.charCodeAt(i) & 0xFF);
       }
     }
+
     function writeUint32(v) {
       header.push(v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF);
     }
+
     function writeUint16(v) {
       header.push(v & 0xFF, (v >> 8) & 0xFF);
     }
-    
+
     if (cfg.adpcm) {
       var pcmBytes = pcm instanceof Uint8Array ? pcm : new Uint8Array(pcm);
       var srcFormat = {
@@ -3466,15 +3919,19 @@
 
       var totalSamples = Math.floor(pcmBytes.length / 2);
       var totalFrames = Math.floor(totalSamples / cfg.channels);
-      
+
       var pcmDataInt16 = new Int16Array(totalSamples);
       var dvConv = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
       for (var i = 0; i < totalSamples; i++) {
         pcmDataInt16[i] = dvConv.getInt16(i * 2, true);
       }
-      
+
       var adpcmResult;
-      if (cfg.adpcmBits === 3 && cfg.adpcmJointStereo && cfg.channels === 2) {
+      var useMSADPCM = String(cfg.adpcmType || "ima").toLowerCase() === "ms";
+      if (useMSADPCM) {
+        if (cfg.channels !== 1 && cfg.channels !== 2) throw new Error("MS ADPCM supports mono or stereo only.");
+        adpcmResult = encodeMSADPCM(pcmDataInt16, cfg.channels, cfg.adpcmBlockSize, cfg.msAdpcmCoefficients);
+      } else if (cfg.adpcmBits === 3 && cfg.adpcmJointStereo && cfg.channels === 2) {
         adpcmResult = encodeJointStereoADPCM3Bit(pcmDataInt16, cfg.adpcmBlockSize);
       } else if (cfg.adpcmBits === 3) {
         adpcmResult = encode3BitADPCM(pcmDataInt16, cfg.channels, cfg.adpcmBlockSize);
@@ -3486,79 +3943,91 @@
       var adpcmData = adpcmResult.adpcmData;
       var BLOCK_ALIGN = adpcmResult.BLOCK_ALIGN;
       var SAMPLES_PER_BLOCK = adpcmResult.SAMPLES_PER_BLOCK;
-      
-      var headerLength = 60;
+
+      var msCoefficients = adpcmResult.coefficients || MS_ADPCM_COEFFICIENTS;
+      var fmtChunkSize = useMSADPCM ? (22 + msCoefficients.length * 4) : 20;
+      var headerLength = 12 + 8 + fmtChunkSize + 12 + 8;
       var fileLength = headerLength + adpcmData.length;
       var wavBytes = new Uint8Array(fileLength);
 
       writeString('RIFF');
       writeUint32(fileLength - 8);
       writeString('WAVE');
-      
+
       writeString('fmt ');
-      writeUint32(20);
-      
-      var formatTagOut = 0x0011;
-      if (cfg.adpcmBits === 3) {
+      writeUint32(fmtChunkSize);
+
+      var formatTagOut = useMSADPCM ? 0x0002 : 0x0011;
+      if (!useMSADPCM && cfg.adpcmBits === 3) {
         formatTagOut = (cfg.adpcmJointStereo && cfg.channels === 2) ? 0x0013 : 0x0012;
-      } else if (cfg.adpcmJointStereo && cfg.channels === 2) {
+      } else if (!useMSADPCM && cfg.adpcmJointStereo && cfg.channels === 2) {
         formatTagOut = 0x0014;
       }
       writeUint16(formatTagOut);
       writeUint16(cfg.channels);
       writeUint32(cfg.sampleRate);
-      
+
       var byteRate = Math.floor((cfg.sampleRate * BLOCK_ALIGN) / SAMPLES_PER_BLOCK);
       writeUint32(byteRate);
 
       writeUint16(BLOCK_ALIGN);
       writeUint16(4);
-      writeUint16(2);
-      writeUint16(SAMPLES_PER_BLOCK);
-      
+      if (useMSADPCM) {
+        writeUint16(4 + msCoefficients.length * 4);
+        writeUint16(SAMPLES_PER_BLOCK);
+        writeUint16(msCoefficients.length);
+        for (var ci = 0; ci < msCoefficients.length; ci++) {
+          writeUint16(msCoefficients[ci][0] & 0xFFFF);
+          writeUint16(msCoefficients[ci][1] & 0xFFFF);
+        }
+      } else {
+        writeUint16(2);
+        writeUint16(SAMPLES_PER_BLOCK);
+      }
+
       writeString('fact');
       writeUint32(4);
       writeUint32(totalFrames);
-      
+
       writeString('data');
       writeUint32(adpcmData.length);
-      
+
       wavBytes.set(header, 0);
       wavBytes.set(adpcmData, headerLength);
-      
+
       return new Blob([wavBytes], {
         type: 'audio/wav'
       });
     } else {
-      var bitDepth = cfg.float ? 32: cfg.bitDepth;
+      var bitDepth = cfg.float ? 32 : cfg.bitDepth;
       var isFloat = !!cfg.float;
-  
-      var bytes = pcm instanceof Uint8Array ? pcm: new Uint8Array(pcm);
+
+      var bytes = pcm instanceof Uint8Array ? pcm : new Uint8Array(pcm);
       var bytesPerSample = getBytesPerSample(bitDepth, isFloat);
       var blockAlign = cfg.channels * bytesPerSample;
       var byteRate = cfg.sampleRate * blockAlign;
       var dataLength = bytes.length;
-  
+
       writeString('RIFF');
       writeUint32(36 + dataLength);
       writeString('WAVE');
-  
+
       writeString('fmt ');
       writeUint32(16);
-      writeUint16(isFloat ? 3: 1);
+      writeUint16(isFloat ? 3 : 1);
       writeUint16(cfg.channels);
       writeUint32(cfg.sampleRate);
       writeUint32(byteRate);
       writeUint16(blockAlign);
       writeUint16(bitDepth);
-  
+
       writeString('data');
       writeUint32(dataLength);
-  
+
       var wavBytes = new Uint8Array(header.length + dataLength);
       wavBytes.set(header, 0);
       wavBytes.set(bytes, header.length);
-  
+
       return new Blob([wavBytes], {
         type: 'audio/wav'
       });
@@ -3566,10 +4035,10 @@
   };
 
   /**
-  * Backwards-compatible alias (similar to previous writeFileWAV).
-  * Returns Promise<Blob>.
-  */
-  SuperPCM.writeFileWAV = function (pcm, options) {
+   * Backwards-compatible alias (similar to previous writeFileWAV).
+   * Returns Promise<Blob>.
+   */
+  SuperPCM.writeFileWAV = function(pcm, options) {
     var blob = SuperPCM.pcmToWavBlob(pcm, options);
     return Promise.resolve(blob);
   };
@@ -3592,7 +4061,7 @@
     }
 
     var targetSampleRate = format.sampleRate;
-    if (bitrate <= 8) targetSampleRate = 8000;        // MPEG-2.5 Target
+    if (bitrate <= 8) targetSampleRate = 8000; // MPEG-2.5 Target
     else if (bitrate <= 16) targetSampleRate = 11025; // MPEG-2.5 Target
     else if (bitrate <= 24) targetSampleRate = 16000; // MPEG-2 Target
     else if (bitrate <= 56) targetSampleRate = 22050; // MPEG-2 Target
@@ -3708,7 +4177,9 @@
     };
     `;
 
-    var workerBlob = new Blob([workerCode], { type: 'application/javascript' });
+    var workerBlob = new Blob([workerCode], {
+      type: 'application/javascript'
+    });
     var workerURL = URL.createObjectURL(workerBlob);
     var worker = new Worker(workerURL);
 
@@ -3735,7 +4206,7 @@
         float: false
       });
     } else {
-      pcmDataResampled = pcmData;
+      pcmDataResampled = pcmData.slice();
     }
 
     worker.postMessage({
@@ -3752,10 +4223,10 @@
   };
 
   /**
-  * Backwards-compatible alias (similar to previous writeFileMP3).
-  * Returns Promise<Blob>.
-  */
-  SuperPCM.writeFileMP3 = function (pcm, format, options = {}) {
+   * Backwards-compatible alias (similar to previous writeFileMP3).
+   * Returns Promise<Blob>.
+   */
+  SuperPCM.writeFileMP3 = function(pcm, format, options = {}) {
     return new Promise(function(resolve) {
       SuperPCM.pcmToMp3Blob(pcm, format, options, function(blob) {
         resolve(blob);
@@ -3764,12 +4235,12 @@
   };
 
   /**
-  * Converts PCM data to FLAC Blob with Metadata (Title, Artist, Album, and Cover Art).
-  * @param {Uint8Array} pcmData - Raw PCM bytes.
-  * @param {Object} format - { sampleRate, channels, bitDepth }
-  * @param {Object} options - { compression, metadata: { title, artist, album, imageBlob } }
-  * @param {Function} callback - Success callback receiving the Blob.
-  */
+   * Converts PCM data to FLAC Blob with Metadata (Title, Artist, Album, and Cover Art).
+   * @param {Uint8Array} pcmData - Raw PCM bytes.
+   * @param {Object} format - { sampleRate, channels, bitDepth }
+   * @param {Object} options - { compression, metadata: { title, artist, album, imageBlob } }
+   * @param {Function} callback - Success callback receiving the Blob.
+   */
   SuperPCM.pcmToFlacBlob = function(pcmData, format, options = {}, callback) {
     var compression = options.compression || 5;
     var metadata = options.metadata || {};
@@ -3918,8 +4389,8 @@
   };
 
   /**
-  * Promisified FLAC writer for SuperPCM.
-  */
+   * Promisified FLAC writer for SuperPCM.
+   */
   SuperPCM.writeFileFLAC = function(pcmData, format, options = {}) {
     return new Promise(function(resolve, reject) {
       SuperPCM.pcmToFlacBlob(pcmData, format, options, function(blob) {
@@ -3930,9 +4401,9 @@
   };
 
   /**
-  * De-interleaves a PCM chunk into separate Float32 arrays.
-  * This is used to bypass AudioBuffer and prevent memory leaks.
-  */
+   * De-interleaves a PCM chunk into separate Float32 arrays.
+   * This is used to bypass AudioBuffer and prevent memory leaks.
+   */
   function decodeInterleavedToArrays(pcmChunk, format) {
     var bitDepth = format.bitDepth;
     var isFloat = !!format.float;
@@ -3943,7 +4414,7 @@
     var samplesPerChannel = Math.floor(pcmChunk.length / (channels * bytesPerSample));
 
     var left = new Float32Array(samplesPerChannel);
-    var right = channels > 1 ? new Float32Array(samplesPerChannel): null;
+    var right = channels > 1 ? new Float32Array(samplesPerChannel) : null;
 
     var offset = 0;
     for (var i = 0; i < samplesPerChannel; i++) {
@@ -3965,9 +4436,9 @@
   }
 
   /**
-  * Converts raw PCM data directly to EAC Blob.
-  * Sequential processing prevents worker congestion and silent crashes.
-  */
+   * Converts raw PCM data directly to EAC Blob.
+   * Sequential processing prevents worker congestion and silent crashes.
+   */
   SuperPCM.pcmToEacBlob = function(pcmData, format, metadata = {}) {
     var encoder = new EACEncoder();
     var bitDepth = format.bitDepth || 16;
@@ -3977,8 +4448,8 @@
     var frameByteSize = frameSize * channels * bytesPerSample;
 
     var totalSamples = Math.floor(pcmData.length / (channels * bytesPerSample));
-    var mode = (channels > 1) ? 2: 0;
-    var k = bitDepth <= 16 ? 4: 10;
+    var mode = (channels > 1) ? 2 : 0;
+    var k = bitDepth <= 16 ? 4 : 10;
 
     // Uses the 23-byte header structure with explicit Little-Endian
     var header = encoder._createHeader(format.sampleRate, totalSamples, mode, frameSize, bitDepth, metadata);
@@ -4004,17 +4475,17 @@
 
         // Must wait for the worker to finish the current block
         encoder._send(decoded.left, decoded.right, mode, bitDepth, frameSize, k)
-        .then(function(encodedFrame) {
-          if (encodedFrame) {
-            chunks.push(encodedFrame);
-          }
-          offset += frameByteSize;
-          processNextFrame(); // Sequential recursion prevents silent death
-        })
-        .catch(function(err) {
-          console.error("SuperPCM EAC Error at offset " + offset + ":", err);
-          reject(err);
-        });
+          .then(function(encodedFrame) {
+            if (encodedFrame) {
+              chunks.push(encodedFrame);
+            }
+            offset += frameByteSize;
+            processNextFrame(); // Sequential recursion prevents silent death
+          })
+          .catch(function(err) {
+            console.error("SuperPCM EAC Error at offset " + offset + ":", err);
+            reject(err);
+          });
       }
 
       processNextFrame();
@@ -4022,20 +4493,20 @@
   };
 
   /**
-  * Promisified EAC writer for SuperPCM.
-  */
+   * Promisified EAC writer for SuperPCM.
+   */
   SuperPCM.writeFileEAC = function(pcmData, format, metadata = {}) {
     return SuperPCM.pcmToEacBlob(pcmData, format, metadata);
   };
 
   /**
-  * Decodes an EAC source (Blob or ArrayBuffer) into raw interleaved PCM.
-  */
-  SuperPCM.eacToPCM = function (eacSource) {
+   * Decodes an EAC source (Blob or ArrayBuffer) into raw interleaved PCM.
+   */
+  SuperPCM.eacToPCM = function(eacSource) {
     var decoder = new EACDecoder();
 
     function parseEac(arrayBuffer) {
-      return new Promise(function (resolve,
+      return new Promise(function(resolve,
         reject) {
         var dv = new DataView(arrayBuffer);
 
@@ -4049,8 +4520,8 @@
           type: 'audio/x-eac'
         });
 
-        decoder.toPCM(blob).then(function (result) {
-          var channels = result.right ? 2: 1;
+        decoder.toPCM(blob).then(function(result) {
+          var channels = result.right ? 2 : 1;
           var bitDepth = result.bitDepth || 24;
           var bytesPerSample = bitDepth / 8;
           var totalSamples = result.totalSamples;
@@ -4067,7 +4538,7 @@
             }
           }
 
-          resolve( {
+          resolve({
             pcm: pcm,
             format: {
               sampleRate: result.sampleRate,
@@ -4077,7 +4548,7 @@
             },
             metadata: result.metadata
           });
-        }).catch(function (err) {
+        }).catch(function(err) {
           reject("EAC Decoding Error: " + err);
         });
       });
@@ -4095,7 +4566,7 @@
   /**
    * Decodes a WAV ArrayBuffer into raw PCM. (Supports Linear PCM and IMA ADPCM)
    */
-  SuperPCM.wavToPCM = function (wavSource) {
+  SuperPCM.wavToPCM = function(wavSource) {
     function parseWav(arrayBuffer) {
       var dv = new DataView(arrayBuffer);
       var len = dv.byteLength;
@@ -4124,21 +4595,22 @@
 
       var blockAlign = 0;
       var samplesPerBlock = 0;
+      var msAdpcmCoefficients = null;
       var totalSamplesFromFact = 0;
-      
+
       var formatInfo = "Unspecified format",
-      formatTag = null;
+        formatTag = null;
       var bitrate = null,
-      averageBitrate = null;
-      
+        averageBitrate = null;
+
       var pos = 12;
 
       while (pos + 8 <= len) {
         var id =
-        String.fromCharCode(dv.getUint8(pos)) +
-        String.fromCharCode(dv.getUint8(pos + 1)) +
-        String.fromCharCode(dv.getUint8(pos + 2)) +
-        String.fromCharCode(dv.getUint8(pos + 3));
+          String.fromCharCode(dv.getUint8(pos)) +
+          String.fromCharCode(dv.getUint8(pos + 1)) +
+          String.fromCharCode(dv.getUint8(pos + 2)) +
+          String.fromCharCode(dv.getUint8(pos + 3));
 
         var size = dv.getUint32(pos + 4, true);
         var chunkDataPos = pos + 8;
@@ -4151,6 +4623,15 @@
           blockAlign = dv.getUint16(chunkDataPos + 12, true);
           bitsPerSample = dv.getUint16(chunkDataPos + 14, true);
           samplesPerBlock = size >= 20 ? dv.getUint16(chunkDataPos + 18, true) : 0;
+
+          if (audioFormat === 0x0002 && size >= 22) {
+            var numCoef = dv.getUint16(chunkDataPos + 20, true);
+            msAdpcmCoefficients = [];
+            var coefPos = chunkDataPos + 22;
+            for (var coefIndex = 0; coefIndex < numCoef && coefPos + 4 <= chunkDataPos + size; coefIndex++, coefPos += 4) {
+              msAdpcmCoefficients.push([dv.getInt16(coefPos, true), dv.getInt16(coefPos + 2, true)]);
+            }
+          }
 
           if (audioFormat === 0xFFFE && size >= 40) {
             var validBits = dv.getUint16(chunkDataPos + 18, true);
@@ -4174,14 +4655,18 @@
 
       if (!dataOffset || !dataSize) throw new Error("WAV missing data chunk.");
       if (!channels || !sampleRate || !bitsPerSample) throw new Error("WAV missing fmt info.");
-      
+
       formatTag = audioFormat;
-      
+
       bitrate = (byteRate * 8) / 1000;
       averageBitrate = (sampleRate * channels * bitsPerSample) / 1000;
 
       if (audioFormat === 1 || audioFormat === 3) {
         formatInfo = formatTag === 3 ? "PCM 32-bit IEEE floating-point (Float)" : `PCM ${bitsPerSample}-bit ${bitsPerSample !== 8 ? "Signed" : "Unsigned"} Integer`;
+      } else if (audioFormat === 0x0002) {
+        formatInfo = "4-bit Microsoft ADPCM";
+        bitsPerSample = 4;
+        averageBitrate = (sampleRate * channels * 4) / 1000;
       } else if (audioFormat === 0x0011 || audioFormat === 0x0069) {
         formatInfo = "4-bit IMA/DVI ADPCM";
         bitsPerSample = 4;
@@ -4199,18 +4684,18 @@
         bitsPerSample = 3;
         averageBitrate = (sampleRate * channels * 3) / 1000;
       }
-      
+
       var pcm = new Uint8Array(arrayBuffer.slice(dataOffset, dataOffset + dataSize));
 
-      if (audioFormat === 0x0011 || audioFormat === 0x0012 || audioFormat === 0x0013 || audioFormat === 0x0014 || audioFormat === 0x0069) {
+      if (audioFormat === 0x0002 || audioFormat === 0x0011 || audioFormat === 0x0012 || audioFormat === 0x0013 || audioFormat === 0x0014 || audioFormat === 0x0069) {
         var samplesFromData = Math.floor((dataSize / blockAlign) * samplesPerBlock);
         var calculatedSamples = totalSamplesFromFact,
-        prevCalculatedSamples = totalSamplesFromFact;
-        
+          prevCalculatedSamples = totalSamplesFromFact;
+
         if (!calculatedSamples || calculatedSamples <= sampleRate || calculatedSamples < samplesFromData * 0.5) {
           calculatedSamples = samplesFromData;
         }
-        
+
         if (audioFormat === 0x0069) {
           if (blockAlign === 72 && channels > 1) {
             calculatedSamples = calculatedSamples ? Math.floor(calculatedSamples / 4) : Math.floor((dataSize / blockAlign) * samplesPerBlock / 2);
@@ -4218,8 +4703,10 @@
             calculatedSamples = calculatedSamples ? Math.floor(calculatedSamples / channels) : Math.floor((dataSize / blockAlign) * samplesPerBlock);
           }
         }
-        
-        if (audioFormat === 0x0012) {
+
+        if (audioFormat === 0x0002) {
+          pcm = decodeMSADPCM(pcm, calculatedSamples, channels, blockAlign, samplesPerBlock, msAdpcmCoefficients);
+        } else if (audioFormat === 0x0012) {
           pcm = decode3BitADPCM(pcm, calculatedSamples * channels, channels, blockAlign, samplesPerBlock);
         } else if (formatTag === 0x0013) {
           pcm = decodeJointStereoADPCM3Bit(pcm, calculatedSamples, blockAlign, samplesPerBlock);
@@ -4238,7 +4725,9 @@
             bitDepth: SuperPCM.BIT_DEPTH_16,
             channels: channels,
             float: false
-          }, { threshold: 0 }).pcm;
+          }, {
+            threshold: 0
+          }).pcm;
         }
 
         bitsPerSample = SuperPCM.BIT_DEPTH_16;
@@ -4282,13 +4771,13 @@
    * WAV Blob/ArrayBuffer -> AudioBuffer
    * ------------------------------------------------------------------ */
 
-  SuperPCM.wavToAudioBuffer = function (wavSource) {
-    return SuperPCM.wavToPCM(wavSource).then(function (info) {
+  SuperPCM.wavToAudioBuffer = function(wavSource) {
+    return SuperPCM.wavToPCM(wavSource).then(function(info) {
       var fmt = info.format;
       return SuperPCM.pcmToAudioBuffer(info.pcm, {
         sampleRate: fmt.sampleRate,
         channels: fmt.channels,
-        bitDepth: fmt.float ? 32: fmt.bitDepth,
+        bitDepth: fmt.float ? 32 : fmt.bitDepth,
         float: !!fmt.float
       });
     });
@@ -4298,8 +4787,8 @@
    * Raw PCM Blob helper (MIME wrapping)
    * ------------------------------------------------------------------ */
 
-  SuperPCM.pcmToBlob = function (pcm, options) {
-    var cfg = assignDefaults( {
+  SuperPCM.pcmToBlob = function(pcm, options) {
+    var cfg = assignDefaults({
       sampleRate: SuperPCM.defaults.sampleRate,
       channels: SuperPCM.defaults.channels,
       bitDepth: SuperPCM.defaults.bitDepth,
@@ -4319,13 +4808,13 @@
       }
     }
 
-    var bytes = pcm instanceof Uint8Array ? pcm: new Uint8Array(pcm);
+    var bytes = pcm instanceof Uint8Array ? pcm : new Uint8Array(pcm);
     return new Blob([bytes], {
       type: mime
     });
   };
 
-  SuperPCM.writeFilePCM = function (pcm, options) {
+  SuperPCM.writeFilePCM = function(pcm, options) {
     var blob = SuperPCM.pcmToBlob(pcm, options);
     return Promise.resolve(blob);
   };
@@ -4346,27 +4835,27 @@
     URL.revokeObjectURL(a.href);
   }
 
-  SuperPCM.saveFilePCM = function (blob, fileNameWithoutExt) {
+  SuperPCM.saveFilePCM = function(blob, fileNameWithoutExt) {
     var name = (fileNameWithoutExt || 'audio') + '.pcm';
     saveBlob(blob, name);
   };
 
-  SuperPCM.saveFileWAV = function (blob, fileNameWithoutExt) {
+  SuperPCM.saveFileWAV = function(blob, fileNameWithoutExt) {
     var name = (fileNameWithoutExt || 'audio') + '.wav';
     saveBlob(blob, name);
   };
 
-  SuperPCM.saveFileMP3 = function (blob, fileNameWithoutExt) {
+  SuperPCM.saveFileMP3 = function(blob, fileNameWithoutExt) {
     var name = (fileNameWithoutExt || 'audio') + '.mp3';
     saveBlob(blob, name);
   };
 
-  SuperPCM.saveFileFLAC = function (blob, fileNameWithoutExt) {
+  SuperPCM.saveFileFLAC = function(blob, fileNameWithoutExt) {
     var name = (fileNameWithoutExt || 'audio') + '.flac';
     saveBlob(blob, name);
   };
 
-  SuperPCM.saveFileEAC = function (blob, fileNameWithoutExt) {
+  SuperPCM.saveFileEAC = function(blob, fileNameWithoutExt) {
     var name = (fileNameWithoutExt || 'audio') + '.eac';
     saveBlob(blob, name);
   };
@@ -4374,7 +4863,7 @@
   /*
    * Audio Source from file (eg. MP3, WAV, OGG, FLAC, etc.) to PCM Data with information
    */
-  SuperPCM.AudioSource = function () {
+  SuperPCM.AudioSource = function() {
     audioSource.apply(this, arguments);
   }
 
@@ -4383,53 +4872,53 @@
    * ------------------------------------------------------------------ */
 
   /**
-  * Real-time PCM Streaming.
-  * - Supports 8-bit Int, 16-bit Int, 24-bit Int, 32-bit Int, and 32-bit Float
-  * - Plays them in real-time using ScriptProcessorNode
-  *
-  * WARNING: ScriptProcessorNode is deprecated but widely supported.
-  */
-  SuperPCM.streamingPCM = function (pcm = new Uint8Array(), options) {
+   * Real-time PCM Streaming.
+   * - Supports 8-bit Int, 16-bit Int, 24-bit Int, 32-bit Int, and 32-bit Float
+   * - Plays them in real-time using ScriptProcessorNode
+   *
+   * WARNING: ScriptProcessorNode is deprecated but widely supported.
+   */
+  SuperPCM.streamingPCM = function(pcm = new Uint8Array(), options) {
     var _this = this,
-    _self = {},
-    cfg = assignDefaults( {
-      bitDepth: SuperPCM.defaults.bitDepth,
-      sampleRate: SuperPCM.defaults.sampleRate,
-      floatMode: SuperPCM.defaults.float,
-      channels: SuperPCM.defaults.channels,
-      bufferSize: 1024,
-      gapless: true,
-      gaplessThreshold: 0.001,
-      fadePlayPauseMs: SuperPCM.fadePlayPauseMs,
-      stereoEnhancer: false,
-      interpolationMode: null
-    }, options || {});
+      _self = {},
+      cfg = assignDefaults({
+        bitDepth: SuperPCM.defaults.bitDepth,
+        sampleRate: SuperPCM.defaults.sampleRate,
+        floatMode: SuperPCM.defaults.float,
+        channels: SuperPCM.defaults.channels,
+        bufferSize: 1024,
+        gapless: true,
+        gaplessThreshold: 0.001,
+        fadePlayPauseMs: SuperPCM.fadePlayPauseMs,
+        stereoEnhancer: false,
+        interpolationMode: null
+      }, options || {});
     _eventListener(this);
-    
+
     _self.audioContext = null;
     _self.scriptProcessor = null;
 
     var isPlaying = false,
-    isStop = false,
-    pcmOffset = 0,
-    length = 0,
-    timeUpdate = 0,
-    normalizedGain = 1,
-    normalizeSpeed = 1,
-    volume = 1,
-    playbackRate = 1,
-    duration = 0,
-    autoplay = false,
-    muted = false,
-    interpolationMode = cfg.interpolationMode,
-    originalSampleRate = cfg.sampleRate,
-    contextSampleRate = cfg.sampleRate,
-    fadeSamples = 0,
-    fadeCounter = 0,
-    fadeDirection = 0,
-    fadeGain = 0,
-    fadeStop = false,
-    dv = new DataView(pcm.buffer);
+      isStop = false,
+      pcmOffset = 0,
+      length = 0,
+      timeUpdate = 0,
+      normalizedGain = 1,
+      normalizeSpeed = 1,
+      volume = 1,
+      playbackRate = 1,
+      duration = 0,
+      autoplay = false,
+      muted = false,
+      interpolationMode = cfg.interpolationMode,
+      originalSampleRate = cfg.sampleRate,
+      contextSampleRate = cfg.sampleRate,
+      fadeSamples = 0,
+      fadeCounter = 0,
+      fadeDirection = 0,
+      fadeGain = 0,
+      fadeStop = false,
+      dv = new DataView(pcm.buffer);
 
     this.playbackRate = 1;
     this.loop = false;
@@ -4445,11 +4934,11 @@
     cfg.bufferSize = bufferSize(cfg.bufferSize);
     Object.defineProperties(this, {
       _bitDepth: {
-        get: function () {
+        get: function() {
           return cfg.bitDepth;
         },
-        set: function (value) {
-          cfg.bitDepth = cfg.floatMode ? SuperPCM.BIT_DEPTH_32: value;
+        set: function(value) {
+          cfg.bitDepth = cfg.floatMode ? SuperPCM.BIT_DEPTH_32 : value;
           _self.generateLength();
           if (isPlaying) _self.restartScriptProcessor();
         },
@@ -4457,10 +4946,10 @@
         configurable: true
       },
       _floatMode: {
-        get: function () {
+        get: function() {
           return cfg.floatMode;
         },
-        set: function (value) {
+        set: function(value) {
           cfg.floatMode = value;
           if (cfg.floatMode) cfg.bitDepth = SuperPCM.BIT_DEPTH_32;
           _self.generateLength();
@@ -4470,10 +4959,10 @@
         configurable: true
       },
       _channels: {
-        get: function () {
+        get: function() {
           return cfg.channels;
         },
-        set: function (value) {
+        set: function(value) {
           cfg.channels = Math.round(clamp(value, 1, Infinity));
           _self.generateLength();
           if (isPlaying) _self.restartScriptProcessor();
@@ -4482,10 +4971,10 @@
         configurable: true
       },
       stereoEnhancer: {
-        get: function () {
+        get: function() {
           return cfg.stereoEnhancer;
         },
-        set: function (value) {
+        set: function(value) {
           cfg.stereoEnhancer = value;
           _self.generatePCM();
         },
@@ -4493,10 +4982,10 @@
         configurable: true
       },
       volume: {
-        get: function () {
+        get: function() {
           return volume;
         },
-        set: function (value) {
+        set: function(value) {
           volume = clamp(value, 0, Infinity);
 
           _this.executeEventListener("volumechange", [_this]);
@@ -4505,10 +4994,10 @@
         configurable: true
       },
       muted: {
-        get: function () {
+        get: function() {
           return muted;
         },
-        set: function (value) {
+        set: function(value) {
           if (muted != value) {
             muted = value;
             _this.executeEventListener("volumechange", [_this]);
@@ -4518,10 +5007,10 @@
         configurable: true
       },
       currentTime: {
-        get: function () {
+        get: function() {
           return clamp(pcmOffset / _this.originalSampleRate, 0, length / _this.originalSampleRate);
         },
-        set: function (value) {
+        set: function(value) {
           _self.setCurrentTime(value);
           _this.executeEventListener("timeupdate", [_this]);
         },
@@ -4529,27 +5018,27 @@
         configurable: true
       },
       currentSample: {
-        get: function () {
+        get: function() {
           return clamp(pcmOffset, 0, length - 1);
         },
-        set: function (value) {
+        set: function(value) {
           pcmOffset = clamp(value, 0, length - 1);
         },
         enumerable: true,
         configurable: true
       },
       totalSamples: {
-        get: function () {
+        get: function() {
           return length;
         },
         enumerable: true,
         configurable: true
       },
       playbackRate: {
-        get: function () {
+        get: function() {
           return playbackRate;
         },
-        set: function (value) {
+        set: function(value) {
           if (playbackRate != value) {
             playbackRate = value;
 
@@ -4560,17 +5049,17 @@
         configurable: true
       },
       duration: {
-        get: function () {
+        get: function() {
           return duration;
         },
         enumerable: true,
         configurable: true
       },
       autoplay: {
-        get: function () {
+        get: function() {
           return autoplay;
         },
-        set: function (value) {
+        set: function(value) {
           autoplay = value;
           if (autoplay && pcm.length != 0) {
             isPlaying = true;
@@ -4579,27 +5068,27 @@
         }
       },
       paused: {
-        get: function () {
+        get: function() {
           return !isPlaying;
         },
         enumerable: true,
         configurable: true
       },
       pcmData: {
-        get: function () {
+        get: function() {
           return pcm;
         },
-        set: function (value) {
+        set: function(value) {
           _self.generatePCM(value);
         },
         enumerable: true,
         configurable: true
       },
       sampleRate: {
-        get: function () {
+        get: function() {
           return cfg.sampleRate;
         },
-        set: function (value) {
+        set: function(value) {
           cfg.sampleRate = clamp(value, SuperPCM.minimumSampleRate, SuperPCM.maximumSampleRate);
           if (isPlaying) _self.restartScriptProcessor();
         },
@@ -4607,10 +5096,10 @@
         configurable: true
       },
       originalSampleRate: {
-        get: function () {
+        get: function() {
           return originalSampleRate;
         },
-        set: function (value) {
+        set: function(value) {
           originalSampleRate = value;
           _self.generateLength();
         },
@@ -4618,10 +5107,10 @@
         configurable: true
       },
       bufferSize: {
-        get: function () {
+        get: function() {
           return cfg.bufferSize;
         },
-        set: function (value) {
+        set: function(value) {
           cfg.bufferSize = bufferSize(value);
           if (isPlaying) _self.restartScriptProcessor();
         },
@@ -4629,7 +5118,7 @@
         configurable: true
       },
       format: {
-        get: function () {
+        get: function() {
           return {
             sampleRate: originalSampleRate,
             channels: cfg.channels,
@@ -4641,10 +5130,10 @@
         configurable: true
       },
       interpolationMode: {
-        get: function () {
+        get: function() {
           return interpolationMode ?? SuperPCM.interpolationMode;
         },
-        set: function (value) {
+        set: function(value) {
           interpolationMode = value;
         },
         enumerable: true,
@@ -4652,7 +5141,7 @@
       }
     });
 
-    this.play = function () {
+    this.play = function() {
       if (!_self.scriptProcessor || !_self.audioContext || (!(fadeDirection >= 0) && _this.fadePlayPauseMs > 0)) {
         isPlaying = true;
         isStop = false;
@@ -4660,7 +5149,7 @@
         _self.startScriptProcessor();
       }
     }
-    this.pause = function () {
+    this.pause = function() {
       if (_self.scriptProcessor && _self.audioContext) {
         isPlaying = false;
         isStop = false;
@@ -4668,7 +5157,7 @@
         _self.stopScriptProcessor();
       }
     }
-    this.stop = function (force = false) {
+    this.stop = function(force = false) {
       if (_self.scriptProcessor && _self.audioContext) {
         isPlaying = false;
         isStop = true;
@@ -4679,7 +5168,7 @@
     }
 
     this.outputBuffer = [];
-    _self.startScriptProcessor = function () {
+    _self.startScriptProcessor = function() {
       if (!SuperPCM.runOnBackground && document.visibilityState == "hidden") return;
 
       if (!_self.scriptProcessor) {
@@ -4688,7 +5177,7 @@
         _this.outputBuffer = [];
         contextSampleRate = _self.audioContext.sampleRate;
 
-        _self.scriptProcessor.onaudioprocess = function (event) {
+        _self.scriptProcessor.onaudioprocess = function(event) {
           normalizeSpeed = originalSampleRate / contextSampleRate;
 
           for (var c = 0; c < event.outputBuffer.numberOfChannels; c++) {
@@ -4711,12 +5200,12 @@
 
                 var t = clamp(fadeCounter / fadeSamples, 0, 1);
                 if (fadeDirection === 1) {
-                  fadeGain = fadeCounter >= fadeSamples ? 1: Math.sin(t * Math.PI * 0.5);
+                  fadeGain = fadeCounter >= fadeSamples ? 1 : Math.sin(t * Math.PI * 0.5);
                 } else {
-                  fadeGain = fadeCounter >= fadeSamples ? 0: Math.cos(t * Math.PI * 0.5);
+                  fadeGain = fadeCounter >= fadeSamples ? 0 : Math.cos(t * Math.PI * 0.5);
                 }
 
-                if (fadeCounter >= fadeSamples + (_this.fadePlayPauseMs > 0 ? event.outputBuffer.length * 3: 0)) {
+                if (fadeCounter >= fadeSamples + (_this.fadePlayPauseMs > 0 ? event.outputBuffer.length * 3 : 0)) {
                   if (fadeDirection === -1) {
                     fadeStop = true;
                   }
@@ -4727,7 +5216,7 @@
               _self.offset = i * playbackRate * normalizeSpeed + pcmOffset;
               if (_this.loop && length > 0) _self.offset = repeat(length, _self.offset);
               for (var c = 0; c < event.outputBuffer.numberOfChannels; c++) {
-                _self.amplitudo = !muted ? _self.getAmplitudo(_self.offset, c): 0;
+                _self.amplitudo = !muted ? _self.getAmplitudo(_self.offset, c) : 0;
                 _self.amplitudo *= volume;
                 _this.outputBuffer[c][i] = _self.amplitudo;
 
@@ -4738,7 +5227,7 @@
                     currOffset: _self.offset,
                     length: length,
                     amplitudo: _self.amplitudo,
-                    getAmplitudo: function (_offset, channel, ratio) {
+                    getAmplitudo: function(_offset, channel, ratio) {
                       return _self.getAmplitudo(_offset, channel, ratio);
                     },
                     index: i,
@@ -4766,12 +5255,12 @@
 
                 var t = clamp(fadeCounter / fadeSamples, 0, 1);
                 if (fadeDirection === 1) {
-                  fadeGain = fadeCounter >= fadeSamples ? 1: Math.sin(t * Math.PI * 0.5);
+                  fadeGain = fadeCounter >= fadeSamples ? 1 : Math.sin(t * Math.PI * 0.5);
                 } else {
-                  fadeGain = fadeCounter >= fadeSamples ? 0: Math.cos(t * Math.PI * 0.5);
+                  fadeGain = fadeCounter >= fadeSamples ? 0 : Math.cos(t * Math.PI * 0.5);
                 }
 
-                if (fadeCounter >= fadeSamples + (_this.fadePlayPauseMs > 0 ? event.outputBuffer.length * 3: 0)) {
+                if (fadeCounter >= fadeSamples + (_this.fadePlayPauseMs > 0 ? event.outputBuffer.length * 3 : 0)) {
                   if (fadeDirection === -1) {
                     fadeStop = true;
                   }
@@ -4782,7 +5271,7 @@
               _self.offset = i * playbackRate * normalizeSpeed + pcmOffset;
               if (_this.loop && length > 0) _self.offset = repeat(length, _self.offset);
               for (var c = 0; c < event.outputBuffer.numberOfChannels; c++) {
-                _self.amplitudo = _self.offset >= 0 && _self.offset < length && !_this.muted ? _self.getAmplitudo(_self.offset, c): 0;
+                _self.amplitudo = _self.offset >= 0 && _self.offset < length && !_this.muted ? _self.getAmplitudo(_self.offset, c) : 0;
                 _self.amplitudo *= volume;
                 _this.outputBuffer[c][i] = _self.amplitudo;
 
@@ -4813,7 +5302,7 @@
             _this.executeEventListener("pause", [_this]);
             if (isStop) {
               _this.executeEventListener("stop", [_this]);
-              _self.setCurrentTime(playbackRate >= 0 ? 0: Infinity);
+              _self.setCurrentTime(playbackRate >= 0 ? 0 : Infinity);
             }
           }
 
@@ -4824,16 +5313,16 @@
         _this.executeEventListener("play", [_this]);
         _this.executeEventListener("playing", [_this]);
       }
-      
+
       _self.startFadeIn();
     };
-    _self.restartScriptProcessor = function () {
+    _self.restartScriptProcessor = function() {
       if (!_self.scriptProcessor) return;
 
       _self.stopScriptProcessor(true);
       _self.startScriptProcessor();
     };
-    _self.stopScriptProcessor = function (force = false) {
+    _self.stopScriptProcessor = function(force = false) {
       if (_self.scriptProcessor && (force || _this.fadePlayPauseMs <= 0)) {
         _self.timeUpdate(true);
         _self.scriptProcessor.onaudioprocess = null;
@@ -4847,7 +5336,7 @@
       }
     };
 
-    _self.startFadeIn = function () {
+    _self.startFadeIn = function() {
       if (fadeDirection != 1) {
         fadeSamples = _this.fadePlayPauseMs / 1000 * contextSampleRate;
 
@@ -4856,7 +5345,7 @@
         fadeGain = 0;
       }
     };
-    _self.startFadeOut = function () {
+    _self.startFadeOut = function() {
       if (fadeDirection != -1) {
         fadeSamples = _this.fadePlayPauseMs / 1000 * contextSampleRate;
 
@@ -4866,11 +5355,11 @@
       }
     };
 
-    _self.getAmplitudo = function (offset, channel, ratio) {
+    _self.getAmplitudo = function(offset, channel, ratio) {
       return SuperPCM.getAmplitudo(pcm, offset, cfg.channels, channel, cfg.bitDepth, cfg.floatMode, _this.interpolationMode, dv, ratio);
     };
-    _self.generatePCM = function (pcmData) {
-      if (pcmData) pcm = new Uint8Array(pcmData);
+    _self.generatePCM = function(pcmData) {
+      if (pcmData) pcm = pcmData instanceof Uint8Array ? pcmData : new Uint8Array(pcmData);
       if (_this.gapless) {
         pcm = SuperPCM.Gapless(pcm, {
           channels: cfg.channels,
@@ -4886,7 +5375,7 @@
           bitDepth: cfg.bitDepth,
           float: cfg.floatMode,
           sampleRate: _this.originalSampleRate
-        }, typeof cfg.stereoEnhancer == "object" ? cfg.stereoEnhancer: {});
+        }, typeof cfg.stereoEnhancer == "object" ? cfg.stereoEnhancer : {});
         cfg.channels = 2;
       }
 
@@ -4898,19 +5387,19 @@
         data: pcm
       }]);
     };
-    _self.generateLength = function () {
+    _self.generateLength = function() {
       length = Math.floor(pcm.length / getBytesPerSample(cfg.bitDepth, cfg.floatMode) / cfg.channels);
       duration = length / originalSampleRate;
       _this.executeEventListener("durationchange", [_this]);
     };
-    _self.resetOffset = function () {
-      pcmOffset = playbackRate >= 0 ? 0: length - 1;
+    _self.resetOffset = function() {
+      pcmOffset = playbackRate >= 0 ? 0 : length - 1;
     };
-    _self.setCurrentTime = function (time) {
+    _self.setCurrentTime = function(time) {
       timeUpdate = Date.now();
       pcmOffset = Math.floor(clamp(time * _this.originalSampleRate, 0, length - 1));
     };
-    _self.timeUpdate = function (force = false) {
+    _self.timeUpdate = function(force = false) {
       var time = Date.now();
       if (time >= timeUpdate || force || ((pcmOffset < 0 || pcmOffset > length - 1) && !_this.loop)) {
         timeUpdate = time + SuperPCM.timeUpdateMs;
@@ -4921,57 +5410,987 @@
     _self.generatePCM(pcm);
     _self.generateLength();
     this.originalSampleRate = cfg.sampleRate;
-    document.addEventListener("visibilitychange", function () {
-      if (!SuperPCM.runOnBackground) {
-        if (document.visibilityState == "hidden") {
-          if (isPlaying) _self.stopScriptProcessor();
-        } else if (isPlaying) _self.startScriptProcessor();
-      }
-    },
+    document.addEventListener("visibilitychange", function() {
+        if (!SuperPCM.runOnBackground) {
+          if (document.visibilityState == "hidden") {
+            if (isPlaying) _self.stopScriptProcessor();
+          } else if (isPlaying) _self.startScriptProcessor();
+        }
+      },
       false);
   }
 
   /**
-  * SuperPCM Player
-  * - Play audio on any file formats (.mp3, .wav, .ogg, .flac, etc.)
-  * - .wav file uses SuperPCM.wavToPCM
-  * - Otherwise file formats uses decodeAudioData and convert into PCM data
-  *
-  * WARNING: The audio decoding process on non-WAV files takes longer than on .wav files
-  */
-  SuperPCM.player = function(src) {
-    var _this = this;
-    SuperPCM.streamingPCM.apply(this, []);
+   * Real-time PCM Streaming.
+   * - Supports 8-bit Int, 16-bit Int, 24-bit Int, 32-bit Int, and 32-bit Float
+   * - Plays them in real-time using AudioWorkletNode
+   *
+   * Improved performance audio streaming using modern AudioWorkletNode than SuperPCM.streamingPCM
+   * Note: Some features are not working after migrating to AudioWorkletNode
+   */
+  SuperPCM.streamingPCMWorklet = function(pcm = new Uint8Array(), options) {
+    var _this = this,
+      _self = {};
+    var cfg = assignDefaults({
+      bitDepth: SuperPCM.defaults.bitDepth,
+      sampleRate: SuperPCM.defaults.sampleRate,
+      floatMode: SuperPCM.defaults.float,
+      channels: SuperPCM.defaults.channels,
+      bufferSize: 1024,
+      gapless: true,
+      gaplessThreshold: 0.001,
+      fadePlayPauseMs: SuperPCM.fadePlayPauseMs,
+      stereoEnhancer: false,
+      interpolationMode: null
+    }, options || {});
+    _eventListener(this);
 
-    var audioSourcePCM = new audioSource();
-    Object.defineProperties(this,
-      {
-        src: {
-          get: function () {
-            return audioSourcePCM.src;
-          },
-          set: function (value) {
-            _this.stop();
+    pcm = pcm instanceof Uint8Array ? pcm : new Uint8Array(pcm || 0);
+    var isPlaying = false,
+      isStop = false,
+      pcmOffset = 0,
+      length = 0,
+      duration = 0;
+    var volume = 1,
+      playbackRate = 1,
+      autoplay = false,
+      muted = false;
+    var interpolationMode = cfg.interpolationMode,
+      originalSampleRate = cfg.sampleRate;
+    var contextSampleRate = cfg.sampleRate,
+      timeUpdate = 0,
+      visibilityPaused = false;
+    _self.audioContext = null;
+    _self.workletNode = null;
+    _self.workletModuleURL = null;
+    _self.lifecycleId = 0;
+    _self.starting = false;
 
-            audioSourcePCM.src = value;
-            audioSourcePCM.start();
-          },
-          enumerable: true,
-          configurable: true
+    this.loop = false;
+    this.audioProcessorHeader = null;
+    this.audioProcessor = null;
+    this.normalizedGain = true;
+    this.gapless = cfg.gapless;
+    this.gaplessThreshold = cfg.gaplessThreshold;
+    this.fadePlayPauseMs = cfg.fadePlayPauseMs;
+    this.outputBuffer = [];
+
+    cfg.sampleRate = clamp(cfg.sampleRate, SuperPCM.minimumSampleRate, SuperPCM.maximumSampleRate);
+    cfg.bufferSize = bufferSize(cfg.bufferSize);
+
+    _self.sendConfig = function() {
+      if (!_self.workletNode) return;
+      _self.workletNode.port.postMessage({
+        type: 'config',
+        playbackRate: playbackRate,
+        volume: volume,
+        muted: muted,
+        loop: _this.loop,
+        normalizedGain: _this.normalizedGain,
+        interpolationMode: _this.interpolationMode,
+        originalSampleRate: originalSampleRate,
+        bufferSize: cfg.bufferSize,
+        monitorEnabled: !!(_this.audioProcessor || _this.audioProcessorHeader)
+      });
+    };
+
+    Object.defineProperties(this, {
+      _bitDepth: {
+        get: function() {
+          return cfg.bitDepth;
         },
-        headers: {
-          get: function () {
-            return audioSourcePCM.headers;
-          },
-          set: function (value) {
-            audioSourcePCM.headers = value;
-          },
-          enumerable: true,
-          configurable: true
+        set: function(v) {
+          cfg.bitDepth = cfg.floatMode ? 32 : v;
+          _self.generateLength();
+          _self.restart();
+        },
+        enumerable: true
+      },
+      _floatMode: {
+        get: function() {
+          return cfg.floatMode;
+        },
+        set: function(v) {
+          cfg.floatMode = !!v;
+          if (cfg.floatMode) cfg.bitDepth = 32;
+          _self.generateLength();
+          _self.restart();
+        },
+        enumerable: true
+      },
+      _channels: {
+        get: function() {
+          return cfg.channels;
+        },
+        set: function(v) {
+          cfg.channels = Math.round(clamp(v, 1, Infinity));
+          _self.generateLength();
+          _self.restart();
+        },
+        enumerable: true
+      },
+      stereoEnhancer: {
+        get: function() {
+          return cfg.stereoEnhancer;
+        },
+        set: function(v) {
+          cfg.stereoEnhancer = v;
+          _self.generatePCM();
+        },
+        enumerable: true
+      },
+      volume: {
+        get: function() {
+          return volume;
+        },
+        set: function(v) {
+          volume = clamp(v, 0, Infinity);
+          _self.sendConfig();
+          _this.executeEventListener('volumechange', [_this]);
+        },
+        enumerable: true
+      },
+      muted: {
+        get: function() {
+          return muted;
+        },
+        set: function(v) {
+          if (muted !== !!v) {
+            muted = !!v;
+            _self.sendConfig();
+            _this.executeEventListener('volumechange', [_this]);
+          }
+        },
+        enumerable: true
+      },
+      currentTime: {
+        get: function() {
+          return clamp(pcmOffset / originalSampleRate, 0, length / originalSampleRate);
+        },
+        set: function(v) {
+          _self.setCurrentTime(v);
+          _this.executeEventListener('timeupdate', [_this]);
+        },
+        enumerable: true
+      },
+      currentSample: {
+        get: function() {
+          return clamp(pcmOffset, 0, Math.max(0, length - 1));
+        },
+        set: function(v) {
+          pcmOffset = clamp(v, 0, Math.max(0, length - 1));
+          if (_self.workletNode) _self.workletNode.port.postMessage({
+            type: 'seek',
+            position: pcmOffset
+          });
+        },
+        enumerable: true
+      },
+      totalSamples: {
+        get: function() {
+          return length;
+        },
+        enumerable: true
+      },
+      playbackRate: {
+        get: function() {
+          return playbackRate;
+        },
+        set: function(v) {
+          if (playbackRate !== v) {
+            playbackRate = Number(v) || 0;
+            _self.sendConfig();
+            _this.executeEventListener('ratechange', [_this]);
+          }
+        },
+        enumerable: true
+      },
+      duration: {
+        get: function() {
+          return duration;
+        },
+        enumerable: true
+      },
+      autoplay: {
+        get: function() {
+          return autoplay;
+        },
+        set: function(v) {
+          autoplay = !!v;
+          if (autoplay && pcm.length) _this.play();
+        },
+        enumerable: true
+      },
+      paused: {
+        get: function() {
+          return !isPlaying;
+        },
+        enumerable: true
+      },
+      pcmData: {
+        get: function() {
+          return pcm;
+        },
+        set: function(v) {
+          _self.generatePCM(v);
+        },
+        enumerable: true
+      },
+      sampleRate: {
+        get: function() {
+          return cfg.sampleRate;
+        },
+        set: function(v) {
+          cfg.sampleRate = clamp(v, SuperPCM.minimumSampleRate, SuperPCM.maximumSampleRate);
+          _self.restart();
+        },
+        enumerable: true
+      },
+      originalSampleRate: {
+        get: function() {
+          return originalSampleRate;
+        },
+        set: function(v) {
+          originalSampleRate = Number(v) || cfg.sampleRate;
+          _self.generateLength();
+          _self.sendConfig();
+        },
+        enumerable: true
+      },
+      bufferSize: {
+        get: function() {
+          return cfg.bufferSize;
+        },
+        set: function(v) {
+          cfg.bufferSize = bufferSize(v);
+          _self.sendConfig();
+        },
+        enumerable: true
+      },
+      format: {
+        get: function() {
+          return {
+            sampleRate: originalSampleRate,
+            channels: cfg.channels,
+            bitDepth: cfg.bitDepth,
+            float: cfg.floatMode
+          };
+        },
+        enumerable: true
+      },
+      interpolationMode: {
+        get: function() {
+          return interpolationMode || SuperPCM.interpolationMode;
+        },
+        set: function(v) {
+          interpolationMode = v;
+          _self.sendConfig();
+        },
+        enumerable: true
+      }
+    });
+
+    this.getAmplitudo = function(offset, channel, ratio) {
+      return SuperPCM.getAmplitudo(pcm, offset, cfg.channels, channel, cfg.bitDepth, cfg.floatMode, _this.interpolationMode, null, ratio);
+    };
+    this.play = function() {
+      isPlaying = true;
+      isStop = false;
+      if (_self.workletNode) _self.fade(1, false, 'play');
+      else _self.start();
+    };
+    this.pause = function() {
+      if (!isPlaying) return;
+      isPlaying = false;
+      isStop = false;
+      _self.fade(0, true, 'pause');
+    };
+    this.stop = function(force) {
+      isPlaying = false;
+      isStop = true;
+      if (force) {
+        _self.close();
+        _self.resetOffset();
+        _this.executeEventListener('stop', [_this]);
+      } else _self.fade(0, true, 'stop');
+    };
+
+    _self.fade = function(target, stopAfterFade, reason) {
+      if (!_self.workletNode) {
+        if (target === 0) _self.close();
+        return;
+      }
+      var frames = Math.max(0, Math.round(_this.fadePlayPauseMs / 1000 * contextSampleRate));
+      _self.workletNode.port.postMessage({
+        type: 'fade',
+        target: target,
+        frames: frames,
+        stopAfterFade: stopAfterFade,
+        reason: reason
+      });
+    };
+    _self.start = async function() {
+      if (!SuperPCM.runOnBackground && document.visibilityState === 'hidden') return;
+      if (_self.starting || _self.workletNode) return;
+      var id = ++_self.lifecycleId;
+      _self.starting = true;
+      var ctx = SuperPCM.audioCtx(cfg.sampleRate);
+      _self.audioContext = ctx;
+      if (!ctx.audioWorklet || typeof AudioWorkletNode === 'undefined') {
+        _self.starting = false;
+        try {
+          ctx.close();
+        } catch (e) {};
+        throw new Error('AudioWorklet is not supported by this browser');
+      }
+      var processorSource = `
+      var SuperPCM = {
+        BIT_DEPTH_8: 8,
+        BIT_DEPTH_16: 16,
+        BIT_DEPTH_24: 24,
+        BIT_DEPTH_32: 32,
+        interpolationMode: "${SuperPCM.interpolationMode}"
+      };
+      
+      function clamp(v, min, max) {
+        return v < min ? min : (v > max ? max : v);
+      }
+      
+      function getBytesPerSample(bitDepth, isFloat) {
+          if (isFloat) return 4;
+          return bitDepth / 8;
+        }
+      
+      function getSample(bytes, dv, offset, bitDepth, isFloat) {
+          var v;
+          if (offset < 0 || offset + getBytesPerSample(bitDepth, isFloat) > bytes.length) return 0;
+      
+          if (isFloat) {
+            v = dv.getFloat32(offset, true);
+            return clamp(v, -1, 1);
+          }
+      
+          switch (bitDepth) {
+            case SuperPCM.BIT_DEPTH_8: {
+              var b = bytes[offset];
+              v = (b / 127.5) - 1;
+              return clamp(v, -1, 1);
+            }
+            case SuperPCM.BIT_DEPTH_16: {
+              var s16 = dv.getInt16(offset, true);
+              v = s16 / 0x8000;
+              return clamp(v, -1, 1);
+            }
+            case SuperPCM.BIT_DEPTH_24: {
+              var b0 = bytes[offset];
+              var b1 = bytes[offset + 1];
+              var b2 = bytes[offset + 2];
+              var s24 = (b2 << 16) | (b1 << 8) | b0;
+              if (s24 & 0x800000) s24 |= 0xFF000000; // sign extend
+              v = s24 / 0x800000;
+              return clamp(v, -1, 1);
+            }
+            case SuperPCM.BIT_DEPTH_32: {
+              var s32 = dv.getInt32(offset, true);
+              v = s32 / 0x80000000;
+              return clamp(v, -1, 1);
+            }
+            default:
+              throw new Error('Unsupported bitDepth: ' + bitDepth);
+          }
+        }
+      
+      function fetchRawSample(pcm, off, channels, channel, bytesPerSample, bitDepth, float, dv, ratio) {
+          var offFloor = Math.floor(off);
+          var frameStride = bytesPerSample * channels;
+          var byteIndex = Math.floor(offFloor * frameStride + channel * bytesPerSample);
+      
+          if (byteIndex >= 0 && byteIndex < pcm.length) {
+            if (ratio > 1) {
+              var bi0 = byteIndex,
+                bi1 = byteIndex + frameStride;
+              var s0 = getSample(pcm, dv, bi0, bitDepth, float),
+                s1 = getSample(pcm, dv, bi1 < pcm.length ? bi1 : bi0, bitDepth, float);
+              var t = off - offFloor;
+      
+              return s0 + (s1 - s0) * t;
+            } else return getSample(pcm, dv, byteIndex, bitDepth, float);
+          }
+      
+          return 0;
+        }
+      
+      function besselI0(x) {
+          var sum = 1;
+          var y = x * x / 4;
+          var t = 1;
+      
+          for (var i = 1; i <= 12; i++) {
+            t *= y / (i * i);
+            sum += t;
+          }
+      
+          return sum;
+        }
+      
+      function kaiserWindow(x, radius, beta) {
+          if (Math.abs(x) > radius) return 0;
+      
+          var r = x / radius;
+          return besselI0(beta * Math.sqrt(1 - r * r)) / besselI0(beta);
+        }
+      
+      function sincKernel(x) {
+          if (x === 0) return 1;
+          var px = Math.PI * x;
+          return Math.sin(px) / px;
+        }
+      
+      var getAmplitudo = ${SuperPCM.getAmplitudo}
+      
+      class SuperPCMStreamingPCMProcessor extends AudioWorkletProcessor {
+        constructor(options) {
+          super();
+      
+          var p = (options && options.processorOptions) || {};
+          this.pcm = new Uint8Array(0);
+          this.dv = null;
+          this.channels = Math.max(1, p.channels || ${SuperPCM.defaults.channels} || 2);
+          this.bitDepth = p.bitDepth || ${SuperPCM.defaults.bitDepth};
+          this.floatMode = !!p.floatMode;
+          this.originalSampleRate = p.originalSampleRate || sampleRate;
+          this.playbackRate = p.playbackRate == null ? 1 : p.playbackRate;
+          this.volume = p.volume == null ? 1 : p.volume;
+          this.muted = !!p.muted;
+          this.loop = !!p.loop;
+          this.normalizedGainEnabled = p.normalizedGain !== false;
+          this.normalizedGain = 1;
+          this.interpolationMode = p.interpolationMode || p.interpolation || "${SuperPCM.interpolationMode}";
+          this.position = Number(p.position) || 0;
+          this.renderPosition = this.position;
+          this.totalFrames = 0;
+          this.playing = false;
+          this.disposed = false;
+          this.ready = false;
+          this.gain = 0;
+          this.fadeTarget = 0;
+          this.fadeStep = 0;
+          this.fadeRemaining = 0;
+          this.stopAfterFade = false;
+          this.stopReason = "pause";
+          this.reportCounter = 0;
+          this.reportEvery = Math.max(128, p.bufferSize || 1024);
+          this.monitorEnabled = false;
+          this.monitorChannels = [];
+          this.monitorIndex = 0;
+          this.bytesPerSample = getBytesPerSample(this.bitDepth, this.floatMode);
+          this.frameStride = this.bytesPerSample * this.channels;
+          this.speed = this.playbackRate * (this.originalSampleRate / sampleRate);
+          this.endedSent = false;
+      
+          this.port.onmessage = (event) => {
+            var data = event.data || {};
+      
+            if (data.type === "init" || data.type === "pcm") {
+              var source = data.pcm;
+              if (source instanceof ArrayBuffer) {
+                this.pcm = new Uint8Array(source);
+              } else if (ArrayBuffer.isView(source)) {
+                this.pcm = new Uint8Array(source.buffer, source.byteOffset, source.byteLength);
+              } else {
+                this.pcm = new Uint8Array(0);
+              }
+      
+              this.channels = Math.max(1, data.channels || this.channels);
+              this.bitDepth = data.bitDepth || this.bitDepth;
+              this.floatMode = data.floatMode == null ? this.floatMode : !!data.floatMode;
+              this.originalSampleRate = Number(data.originalSampleRate) || this.originalSampleRate || sampleRate;
+              this.interpolationMode = data.interpolationMode || this.interpolationMode;
+              this.bytesPerSample = getBytesPerSample(this.bitDepth, this.floatMode);
+              this.frameStride = this.bytesPerSample * this.channels;
+              this.totalFrames = this.frameStride > 0 ? Math.floor(this.pcm.byteLength / this.frameStride) : 0;
+              this.dv = this.pcm.byteLength ? new DataView(this.pcm.buffer, this.pcm.byteOffset, this.pcm.byteLength) : null;
+              this.position = clamp(Number(data.position) || 0, 0, this.totalFrames);
+              this.renderPosition = this.position;
+              this.updateSpeed();
+              this.ready = this.totalFrames > 0;
+              this.playing = this.ready;
+              this.disposed = false;
+              this.endedSent = false;
+              this.port.postMessage({
+                type: "ready",
+                totalFrames: this.totalFrames,
+                duration: this.originalSampleRate > 0 ? this.totalFrames / this.originalSampleRate : 0
+              });
+              return;
+            }
+      
+            if (data.type === "config") {
+              if (data.playbackRate != null) this.playbackRate = Math.max(0, Number(data.playbackRate) || 0);
+              if (data.volume != null) this.volume = Math.max(0, Number(data.volume) || 0);
+              if (data.muted != null) this.muted = !!data.muted;
+              if (data.loop != null) this.loop = !!data.loop;
+              if (data.normalizedGain != null) this.normalizedGainEnabled = !!data.normalizedGain;
+              if (data.interpolationMode) this.interpolationMode = data.interpolationMode;
+              if (data.originalSampleRate != null) this.originalSampleRate = Number(data.originalSampleRate) || sampleRate;
+              if (data.bufferSize != null) this.reportEvery = Math.max(128, data.bufferSize | 0);
+              if (data.monitorEnabled != null) this.monitorEnabled = !!data.monitorEnabled;
+              this.updateSpeed();
+              return;
+            }
+      
+            if (data.type === "seek") {
+              this.position = clamp(Number(data.position) || 0, 0, this.totalFrames);
+              this.renderPosition = this.position;
+              this.endedSent = false;
+              this.port.postMessage({ type: "seeked", position: this.position });
+              return;
+            }
+      
+            if (data.type === "fade") {
+              this.startFade(data.target, data.frames, data.stopAfterFade, data.reason);
+              return;
+            }
+      
+            if (data.type === "stop") {
+              this.playing = false;
+              this.disposed = true;
+              this.monitorChannels = [];
+            }
+          };
+        }
+      
+        updateSpeed() {
+          var rate = Number(this.playbackRate);
+          if (!Number.isFinite(rate)) rate = 1;
+          this.speed = rate * ((Number(this.originalSampleRate) || sampleRate) / sampleRate);
+        }
+      
+        startFade(target, frames, stopAfterFade, reason) {
+          target = target > 0 ? 1 : 0;
+          frames = Math.max(0, frames | 0);
+          this.fadeTarget = target;
+          this.stopAfterFade = !!stopAfterFade && target === 0;
+          this.stopReason = reason || "pause";
+          if (target > 0) {
+            this.playing = true;
+            this.disposed = false;
+            this.endedSent = false;
+          }
+          if (frames <= 0) {
+            this.gain = target;
+            this.fadeStep = 0;
+            this.fadeRemaining = 0;
+            this.finishFade();
+          } else {
+            this.fadeRemaining = frames;
+            this.fadeStep = (target - this.gain) / frames;
+          }
+        }
+      
+        finishFade() {
+          this.gain = this.fadeTarget;
+          this.fadeStep = 0;
+          this.fadeRemaining = 0;
+          this.port.postMessage({
+            type: "fade-complete",
+            target: this.fadeTarget,
+            reason: this.stopReason,
+            position: this.position
+          });
+          if (this.stopAfterFade && this.fadeTarget === 0) this.playing = false;
+        }
+      
+        updateFade() {
+          if (this.fadeRemaining <= 0) return;
+          this.gain += this.fadeStep;
+          this.fadeRemaining--;
+          if (this.fadeRemaining <= 0) this.finishFade();
+        }
+      
+        wrapFrame(frame) {
+          if (this.totalFrames <= 0) return 0;
+          frame %= this.totalFrames;
+          return frame < 0 ? frame + this.totalFrames : frame;
+        }
+      
+        readRawSample(frame, channel) {
+          if (!this.dv || this.totalFrames <= 0 || channel < 0 || channel >= this.channels) return 0;
+          if (this.loop) frame = this.wrapFrame(frame);
+          else if (frame < 0 || frame >= this.totalFrames) return 0;
+      
+          var offset = frame * this.frameStride + channel * this.bytesPerSample;
+          if (offset < 0 || offset + this.bytesPerSample > this.pcm.byteLength) return 0;
+      
+          if (this.floatMode) {
+            var fv = this.dv.getFloat32(offset, true);
+            return Number.isFinite(fv) ? clamp(fv, -1, 1) : 0;
+          }
+      
+          if (this.bitDepth === 8) return this.pcm[offset] / 127.5 - 1;
+          if (this.bitDepth === 16) return this.dv.getInt16(offset, true) / 32768;
+          if (this.bitDepth === 24) {
+            var v = this.pcm[offset] | (this.pcm[offset + 1] << 8) | (this.pcm[offset + 2] << 16);
+            if (v & 0x800000) v |= 0xFF000000;
+            return v / 8388608;
+          }
+          if (this.bitDepth === 32) return this.dv.getInt32(offset, true) / 2147483648;
+          return 0;
+        }
+      
+        getAmplitude(position, channel) {
+          return getAmplitudo(
+            this.pcm,
+            position,
+            this.channels,
+            channel,
+            this.bitDepth,
+            this.floatMode,
+            this.interpolationMode,
+            this.dv,
+            1
+          );
+        }
+      
+        ensureMonitor(channelCount) {
+          if (!this.monitorEnabled) return;
+          if (this.monitorChannels.length === channelCount && this.monitorChannels[0] && this.monitorChannels[0].length === this.reportEvery) return;
+          this.monitorChannels = [];
+          for (var c = 0; c < channelCount; c++) this.monitorChannels[c] = new Float32Array(this.reportEvery);
+          this.monitorIndex = 0;
+        }
+      
+        flushMonitor() {
+          if (!this.monitorEnabled || this.monitorIndex <= 0) return;
+          var channels = [];
+          var transfer = [];
+          for (var c = 0; c < this.monitorChannels.length; c++) {
+            var copy = this.monitorChannels[c].slice(0, this.monitorIndex);
+            channels[c] = copy;
+            transfer.push(copy.buffer);
+          }
+          this.port.postMessage({
+            type: "monitor",
+            channels: channels,
+            frames: this.monitorIndex,
+            position: this.position,
+            playbackRate: this.playbackRate,
+            volume: this.volume,
+            muted: this.muted
+          }, transfer);
+          this.monitorIndex = 0;
+        }
+      
+        process(inputs, outputs) {
+          if (this.disposed) return false;
+          var output = outputs[0];
+          if (!output || output.length === 0) return true;
+          var frameCount = output[0].length;
+          this.ensureMonitor(output.length);
+      
+          for (var frame = 0; frame < frameCount; frame++) {
+            this.updateFade();
+            var ended = !this.loop && this.ready && (this.renderPosition < 0 || this.renderPosition >= this.totalFrames);
+      
+            for (var channel = 0; channel < output.length; channel++) {
+              var sample = 0;
+              if (this.playing && this.ready && !ended) {
+                var sourceChannel = channel < this.channels ? channel : this.channels - 1;
+                sample = this.getAmplitude(this.renderPosition, sourceChannel);
+                var level = this.muted ? 0 : this.volume;
+                if (this.normalizedGainEnabled) level *= this.normalizedGain;
+                sample *= level * this.gain;
+              }
+              sample = clamp(sample, -1, 1);
+              output[channel][frame] = sample;
+              if (this.monitorEnabled && this.monitorChannels[channel]) this.monitorChannels[channel][this.monitorIndex] = sample;
+            }
+      
+            if (this.playing && this.ready && !ended) {
+              this.renderPosition += this.speed;
+              if (this.loop && this.totalFrames > 0) this.renderPosition = this.wrapFrame(this.renderPosition);
+              this.position = this.renderPosition;
+            }
+      
+            if (this.monitorEnabled) {
+              this.monitorIndex++;
+              if (this.monitorIndex >= this.reportEvery) this.flushMonitor();
+            }
+      
+            this.reportCounter++;
+            if (this.reportCounter >= this.reportEvery) {
+              this.reportCounter = 0;
+              this.port.postMessage({
+                type: "position",
+                position: this.position,
+                currentTime: this.originalSampleRate > 0 ? this.position / this.originalSampleRate : 0,
+                ended: ended
+              });
+            }
+      
+            if (ended && !this.endedSent) {
+              this.endedSent = true;
+              this.playing = false;
+              this.port.postMessage({ type: "ended", position: this.position });
+            }
+          }
+      
+          return true;
+        }
+      }
+      
+      registerProcessor("superpcm-streaming-pcm", SuperPCMStreamingPCMProcessor);
+      `;
+      var url = URL.createObjectURL(new Blob([processorSource], {
+        type: 'application/javascript'
+      }));
+      _self.workletModuleURL = url;
+      try {
+        await ctx.audioWorklet.addModule(url);
+      } catch (err) {
+        if (id === _self.lifecycleId) _self.starting = false;
+        try {
+          ctx.close();
+        } catch (e) {};
+        throw err;
+      }
+      if (id !== _self.lifecycleId || !isPlaying || _self.audioContext !== ctx) {
+        try {
+          ctx.close();
+        } catch (e) {};
+        return;
+      }
+      var node = new AudioWorkletNode(ctx, 'superpcm-streaming-pcm', {
+        numberOfInputs: 0,
+        numberOfOutputs: 1,
+        outputChannelCount: [cfg.channels],
+        processorOptions: {
+          channels: cfg.channels,
+          bitDepth: cfg.bitDepth,
+          floatMode: cfg.floatMode,
+          originalSampleRate: originalSampleRate,
+          playbackRate: playbackRate,
+          volume: volume,
+          muted: muted,
+          loop: _this.loop,
+          normalizedGain: _this.normalizedGain,
+          interpolationMode: _this.interpolationMode,
+          position: pcmOffset,
+          bufferSize: cfg.bufferSize,
+          ringBufferSize: Math.max(2048, cfg.bufferSize * 4),
+          prebufferFrames: cfg.bufferSize,
+          refillChunk: 512
         }
       });
+      _self.workletNode = node;
+      contextSampleRate = ctx.sampleRate;
+      node.port.onmessage = function(ev) {
+        var d = ev.data || {};
+        if (d.position != null) {
+          pcmOffset = d.position;
+          _self.timeUpdate();
+        }
+        if (d.type === 'ready') {
+          _self.sendConfig();
+          _self.fade(1, false, 'play');
+        } else if (d.type === 'state') {} else if (d.type === 'monitor') {
+          _this.outputBuffer = d.channels || [];
+          try {
+            if (typeof _this.audioProcessorHeader === 'function') _this.audioProcessorHeader({
+              length: length,
+              speed: playbackRate,
+              offset: pcmOffset,
+              main: _this
+            });
+          } catch (e) {}
+          if (typeof _this.audioProcessor === 'function' && _this.outputBuffer.length) {
+            try {
+              for (var i = 0; i < _this.outputBuffer[0].length; i++)
+                for (var c = 0; c < _this.outputBuffer.length; c++) _this.audioProcessor({
+                  output: _this.outputBuffer,
+                  offset: pcmOffset,
+                  currOffset: pcmOffset - _this.outputBuffer[0].length * playbackRate * (originalSampleRate / contextSampleRate) + i * playbackRate * (originalSampleRate / contextSampleRate),
+                  length: length,
+                  amplitudo: _this.outputBuffer[c][i],
+                  getAmplitudo: _this.getAmplitudo,
+                  index: i,
+                  channel: c,
+                  bufferSize: _this.outputBuffer[0].length,
+                  speed: playbackRate,
+                  volume: volume,
+                  muted: muted,
+                  main: _this
+                });
+            } catch (e) {}
+          }
+        } else if (d.type === 'fade-complete' && d.target === 0) {
+          var reason = d.reason || 'pause';
+          _self.close();
+          if (reason === 'stop' || isStop) {
+            _self.resetOffset();
+            _this.executeEventListener('stop', [_this]);
+          } else _this.executeEventListener('pause', [_this]);
+        } else if (d.type === 'ended') {
+          isPlaying = false;
+          _self.close();
+          _self.resetOffset();
+          _this.executeEventListener('ended', [_this]);
+        }
+      };
+      node.connect(ctx.destination);
+      var copy = pcm.slice();
+      node.port.postMessage({
+        type: 'init',
+        pcm: copy.buffer,
+        channels: cfg.channels,
+        bitDepth: cfg.bitDepth,
+        floatMode: cfg.floatMode,
+        originalSampleRate: originalSampleRate,
+        position: pcmOffset,
+        interpolationMode: _this.interpolationMode
+      }, [copy.buffer]);
+      _self.starting = false;
+      _this.executeEventListener('play', [_this]);
+      _this.executeEventListener('playing', [_this]);
+    };
+    _self.close = function() {
+      ++_self.lifecycleId;
+      _self.starting = false;
+      var node = _self.workletNode,
+        ctx = _self.audioContext;
+      _self.workletNode = null;
+      _self.audioContext = null;
+      if (node) {
+        try {
+          node.port.postMessage({
+            type: 'stop'
+          });
+        } catch (e) {};
+        node.port.onmessage = null;
+        try {
+          node.disconnect();
+        } catch (e) {}
+      }
+      if (ctx) try {
+        ctx.close();
+      } catch (e) {}
+      if (_self.workletModuleURL) {
+        URL.revokeObjectURL(_self.workletModuleURL);
+        _self.workletModuleURL = null;
+      }
+      _this.outputBuffer = [];
+      _self.timeUpdate(true);
+    };
+    _self.restart = function() {
+      var playing = isPlaying;
+      _self.close();
+      if (playing) _self.start();
+    };
+    _self.generatePCM = function(data) {
+      if (data != null) pcm = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (_this.gapless) pcm = SuperPCM.Gapless(pcm, {
+        channels: cfg.channels,
+        bitDepth: cfg.bitDepth,
+        float: cfg.floatMode
+      }, {
+        threshold: _this.gaplessThreshold
+      }).pcm;
+      if (cfg.stereoEnhancer) {
+        pcm = SuperPCM.StereoEnhancer(pcm, {
+          channels: cfg.channels,
+          bitDepth: cfg.bitDepth,
+          float: cfg.floatMode,
+          sampleRate: originalSampleRate
+        }, typeof cfg.stereoEnhancer === 'object' ? cfg.stereoEnhancer : {});
+        cfg.channels = 2;
+      }
+      _self.generateLength();
+      _this.executeEventListener('pcmdatachange', [{
+        length: pcm.length,
+        totalFrames: length,
+        data: pcm
+      }]);
+      if (isPlaying) _self.restart();
+    };
+    _self.generateLength = function() {
+      length = Math.floor(pcm.length / getBytesPerSample(cfg.bitDepth, cfg.floatMode) / cfg.channels);
+      duration = length / originalSampleRate;
+      _this.executeEventListener('durationchange', [_this]);
+    };
+    _self.resetOffset = function() {
+      pcmOffset = playbackRate >= 0 ? 0 : Math.max(0, length - 1);
+    };
+    _self.setCurrentTime = function(time) {
+      timeUpdate = Date.now();
+      pcmOffset = Math.floor(clamp(time * originalSampleRate, 0, Math.max(0, length - 1)));
+      if (_self.workletNode) _self.workletNode.port.postMessage({
+        type: 'seek',
+        position: pcmOffset
+      });
+    };
+    _self.timeUpdate = function(force) {
+      var now = Date.now();
+      if (force || now >= timeUpdate) {
+        timeUpdate = now + SuperPCM.timeUpdateMs;
+        _this.executeEventListener('timeupdate', [_this]);
+      }
+    };
 
-    audioSourcePCM.onSuccess = function (result) {
+    _self.generatePCM(pcm);
+    this.originalSampleRate = cfg.sampleRate;
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'hidden') {
+        if (isPlaying) {
+          visibilityPaused = true;
+          _this.pause();
+        }
+      } else if (visibilityPaused) {
+        visibilityPaused = false;
+        _this.play();
+      }
+    }, false);
+  }
+
+  /**
+   * SuperPCM Player
+   * - Play audio on any file formats (.mp3, .wav, .ogg, .flac, etc.)
+   * - .wav file uses SuperPCM.wavToPCM
+   * - Otherwise file formats uses decodeAudioData and convert into PCM data
+   *
+   * WARNING: The audio decoding process on non-WAV files takes longer than on .wav files
+   */
+  SuperPCM.player = function(src, worklet = SuperPCM.useWorklet) {
+    var _this = this;
+    (worklet ? SuperPCM.streamingPCMWorklet : SuperPCM.streamingPCM).apply(this, []);
+
+    var audioSourcePCM = new audioSource();
+    Object.defineProperties(this, {
+      src: {
+        get: function() {
+          return audioSourcePCM.src;
+        },
+        set: function(value) {
+          _this.stop();
+
+          audioSourcePCM.src = value;
+          audioSourcePCM.start();
+        },
+        enumerable: true,
+        configurable: true
+      },
+      headers: {
+        get: function() {
+          return audioSourcePCM.headers;
+        },
+        set: function(value) {
+          audioSourcePCM.headers = value;
+        },
+        enumerable: true,
+        configurable: true
+      }
+    });
+
+    audioSourcePCM.onSuccess = function(result) {
       _this.originalSampleRate = result.sampleRate;
       _this.sampleRate = result.sampleRate;
       _this._floatMode = result.float;
@@ -4984,7 +6403,7 @@
       _this.executeEventListener("canplay", [_this]);
       _this.executeEventListener("canplaythrough", [_this]);
     };
-    audioSourcePCM.onError = function (err) {
+    audioSourcePCM.onError = function(err) {
       _this.executeEventListener("error", [err]);
     };
 
@@ -4992,9 +6411,10 @@
   };
 
   /**
-  * SuperPCM Audio Stream
-  */
+   * SuperPCM Audio Stream
+   */
   var audioSourceMap = new WeakMap();
+
   function getMediaElementSource(ctx, audio) {
     if (!audioSourceMap.has(ctx)) {
       audioSourceMap.set(ctx, new WeakMap());
@@ -5008,11 +6428,11 @@
     return source;
   }
 
-  SuperPCM.AudioStream = function (element, options) {
+  SuperPCM.AudioStream = function(element, options) {
     var _this = this,
-    _self = {},
-    audioElement = null;
-    cfg = assignDefaults( {
+      _self = {},
+      audioElement = null;
+    cfg = assignDefaults({
       sampleRate: SuperPCM.defaults.sampleRate,
       channels: SuperPCM.defaults.channels,
       bufferSize: 2048
@@ -5028,10 +6448,10 @@
 
     Object.defineProperties(this, {
       sampleRate: {
-        get: function () {
+        get: function() {
           return cfg.sampleRate;
         },
-        set: function (value) {
+        set: function(value) {
           var targetValue = clamp(value, SuperPCM.minimumSampleRate, SuperPCM.maximumSampleRate);
           if (cfg.sampleRate !== targetValue) {
             cfg.sampleRate = targetValue;
@@ -5042,10 +6462,10 @@
         configurable: true
       },
       channels: {
-        get: function () {
+        get: function() {
           return cfg.channels;
         },
-        set: function (value) {
+        set: function(value) {
           if (cfg.channels != value) {
             cfg.channels = value;
             if (_self.scriptProcessor) _self.restartScriptProcessor();
@@ -5055,10 +6475,10 @@
         configurable: true
       },
       bufferSize: {
-        get: function () {
+        get: function() {
           return cfg.bufferSize;
         },
-        set: function (value) {
+        set: function(value) {
           var targetValue = bufferSize(value);
           if (cfg.bufferSize !== targetValue) {
             cfg.bufferSize = targetValue;
@@ -5070,29 +6490,29 @@
       },
 
       audioElement: {
-        get: function () {
+        get: function() {
           return audioElement;
         },
-        set: function (value) {
+        set: function(value) {
           _self.setElement(value);
         }
       }
     });
 
-    _self.initialize = function () {
+    _self.initialize = function() {
       if (!audioElement) return;
 
-      var audioPlay = function () {
-        if (pendingPause) clearTimeout(pendingPause);
-        if (_this.controlAudio) _self.startScriptProcessor();
-      },
-      audioPause = function () {
-        pendingPause = setTimeout(function () {
-          if (audioElement.seeking) return;
-          if (_this.controlAudio) _self.stopScriptProcessor();
+      var audioPlay = function() {
+          if (pendingPause) clearTimeout(pendingPause);
+          if (_this.controlAudio) _self.startScriptProcessor();
         },
-          50);
-      }
+        audioPause = function() {
+          pendingPause = setTimeout(function() {
+              if (audioElement.seeking) return;
+              if (_this.controlAudio) _self.stopScriptProcessor();
+            },
+            50);
+        }
 
       audioElement.removeEventListener("play",
         audioPlay);
@@ -5108,8 +6528,8 @@
       audioElement.addEventListener("ended",
         audioPause);
     }
-    _self.setElement = function (el) {
-      audioElement = el && typeof el == "string" ? document.querySelector(el): el;
+    _self.setElement = function(el) {
+      audioElement = el && typeof el == "string" ? document.querySelector(el) : el;
       var inElement;
       if (audioElement) inElement = audioElement.querySelector("audio") || audioElement.querySelector("video");
       if (inElement) audioElement = inElement;
@@ -5120,7 +6540,7 @@
 
     this.inputBuffer = [];
     this.outputBuffer = [];
-    _self.startScriptProcessor = function () {
+    _self.startScriptProcessor = function() {
       if (_self.scriptProcessor || !audioElement) return;
       normalizedGain = 1;
       _this.inputBuffer = [];
@@ -5135,12 +6555,12 @@
 
       try {
         _self.mediaElementSource.disconnect();
-      } catch(e) {}
+      } catch (e) {}
 
       _self.mediaElementSource.connect(_self.scriptProcessor);
       _self.scriptProcessor.connect(_self.audioContext.destination);
 
-      _self.scriptProcessor.onaudioprocess = function (event) {
+      _self.scriptProcessor.onaudioprocess = function(event) {
         for (var c = 0; c < event.inputBuffer.numberOfChannels; c++) {
           _this.inputBuffer[c] = event.inputBuffer.getChannelData(c);
           _this.outputBuffer[c] = event.outputBuffer.getChannelData(c);
@@ -5167,8 +6587,8 @@
                   input: _this.inputBuffer,
                   output: _this.outputBuffer,
                   amplitudo: _this.inputBuffer[c][i],
-                  getAmplitudo: function (channel, index = i) {
-                    return _this.inputBuffer[channel] != null ? _this.inputBuffer[channel][index]: 0;
+                  getAmplitudo: function(channel, index = i) {
+                    return _this.inputBuffer[channel] != null ? _this.inputBuffer[channel][index] : 0;
                   },
                   index: i,
                   channel: c,
@@ -5197,7 +6617,7 @@
         }
       }
     }
-    _self.restartScriptProcessor = function () {
+    _self.restartScriptProcessor = function() {
       if (_self.scriptProcessor) {
         _self.scriptProcessor.onaudioprocess = null;
         _self.scriptProcessor.disconnect();
@@ -5225,13 +6645,13 @@
       if (_self.audioContext) {
         try {
           _self.audioContext.close();
-        } catch(e) {}
+        } catch (e) {}
         _self.audioContext = null;
       }
       _self.audioContext = SuperPCM.audioCtx(cfg.sampleRate);
       _self.startScriptProcessor();
     }
-    _self.stopScriptProcessor = function () {
+    _self.stopScriptProcessor = function() {
       if (!_self.scriptProcessor) return;
 
       _self.scriptProcessor.onaudioprocess = null;
@@ -5246,10 +6666,10 @@
       }
     }
 
-    this.start = function () {
+    this.start = function() {
       _self.startScriptProcessor();
     }
-    this.stop = function () {
+    this.stop = function() {
       _self.stopScriptProcessor();
     }
 
@@ -5260,36 +6680,36 @@
   }
 
   /**
-  * SuperPCM Recorder
-  */
-  SuperPCM.Recorder = function (options) {
+   * SuperPCM Recorder
+   */
+  SuperPCM.Recorder = function(options) {
     var _this = this,
-    cfg = assignDefaults( {
-      bitDepth: SuperPCM.defaults.bitDepth,
-      sampleRate: SuperPCM.defaults.sampleRate,
-      float: SuperPCM.defaults.float,
-      channels: SuperPCM.defaults.channels,
-      gapless: false,
-      gaplessThreshold: 0.001,
-      duration: 60
-    }, options || {});
+      cfg = assignDefaults({
+        bitDepth: SuperPCM.defaults.bitDepth,
+        sampleRate: SuperPCM.defaults.sampleRate,
+        float: SuperPCM.defaults.float,
+        channels: SuperPCM.defaults.channels,
+        gapless: false,
+        gaplessThreshold: 0.001,
+        duration: 60
+      }, options || {});
 
     var bytes,
-    dv,
-    bytesPerSample,
-    frameSize,
-    offset = 0,
-    recordedOffset = 0,
-    length = 0,
-    isRecording = false;
+      dv,
+      bytesPerSample,
+      frameSize,
+      offset = 0,
+      recordedOffset = 0,
+      length = 0,
+      isRecording = false;
     cfg.sampleRate = clamp(cfg.sampleRate, SuperPCM.minimumSampleRate, SuperPCM.maximumSampleRate);
 
     Object.defineProperties(this, {
       duration: {
-        get: function () {
+        get: function() {
           return cfg.duration;
         },
-        set: function (value) {
+        set: function(value) {
           if (cfg.duration != value) {
             cfg.duration = clamp(value, 0, 600);
             _this.updateConfig();
@@ -5300,10 +6720,10 @@
       },
 
       bitDepth: {
-        get: function () {
+        get: function() {
           return cfg.bitDepth;
         },
-        set: function (value) {
+        set: function(value) {
           if (cfg.bitDepth != value) {
             cfg.bitDepth = value;
             _this.updateConfig();
@@ -5313,10 +6733,10 @@
         configurable: true
       },
       sampleRate: {
-        get: function () {
+        get: function() {
           return cfg.sampleRate;
         },
-        set: function (value) {
+        set: function(value) {
           value = clamp(value, SuperPCM.minimumSampleRate, SuperPCM.maximumSampleRate);
           if (cfg.sampleRate != value) {
             cfg.sampleRate = value;
@@ -5327,10 +6747,10 @@
         configurable: true
       },
       channels: {
-        get: function () {
+        get: function() {
           return cfg.channels;
         },
-        set: function (value) {
+        set: function(value) {
           if (cfg.channels != value) {
             cfg.channels = value;
             _this.updateConfig();
@@ -5340,10 +6760,10 @@
         configurable: true
       },
       float: {
-        get: function () {
+        get: function() {
           return cfg.float;
         },
-        set: function (value) {
+        set: function(value) {
           if (cfg.float != value) {
             cfg.float = value;
             _this.updateConfig();
@@ -5354,20 +6774,20 @@
       },
 
       gapless: {
-        get: function () {
+        get: function() {
           return cfg.gapless;
         },
-        set: function (value) {
+        set: function(value) {
           cfg.gapless = value;
         },
         enumerable: true,
         configurable: true
       },
       gaplessThreshold: {
-        get: function () {
+        get: function() {
           return cfg.gaplessThreshold;
         },
-        set: function (value) {
+        set: function(value) {
           cfg.gaplessThreshold = value;
         },
         enumerable: true,
@@ -5375,32 +6795,32 @@
       },
 
       progress: {
-        get: function () {
+        get: function() {
           var maxBytes = length * frameSize;
-          return maxBytes > 0 ? clamp(offset / maxBytes, 0, 1): 0;
+          return maxBytes > 0 ? clamp(offset / maxBytes, 0, 1) : 0;
         },
         enumerable: true,
         configurable: true
       },
       total: {
-        get: function () {
+        get: function() {
           return length;
         },
         enumerable: true,
         configurable: true
       },
       recorded: {
-        get: function () {
+        get: function() {
           return Math.floor(recordedOffset / frameSize);
         },
         enumerable: true,
         configurable: true
       },
       current: {
-        get: function () {
+        get: function() {
           return Math.floor(offset / frameSize);
         },
-        set: function (value) {
+        set: function(value) {
           var maxFrames = length;
           var targetFrame = clamp(Math.floor(value), 0, maxFrames);
           offset = targetFrame * frameSize;
@@ -5409,14 +6829,14 @@
         configurable: true
       },
       totalTime: {
-        get: function () {
+        get: function() {
           return length / cfg.sampleRate;
         },
         enumerable: true,
         configurable: true
       },
       timeRecorded: {
-        get: function () {
+        get: function() {
           return (offset / frameSize) / cfg.sampleRate;
         },
         enumerable: true,
@@ -5426,7 +6846,7 @@
 
     this.autoUpdate = false;
 
-    this.initialize = function (dataView = true) {
+    this.initialize = function(dataView = true) {
       bytesPerSample = getBytesPerSample(cfg.bitDepth,
         cfg.float);
       frameSize = bytesPerSample * cfg.channels;
@@ -5439,7 +6859,7 @@
       bytes = new Uint8Array(length * frameSize);
       dv = new DataView(bytes.buffer);
     }
-    this.clear = function () {
+    this.clear = function() {
       length = 0;
       recordedOffset = offset = 0;
       bytes = null;
@@ -5447,13 +6867,13 @@
       isRecording = false;
     }
 
-    this.start = function () {
+    this.start = function() {
       if (!isRecording) {
         isRecording = true;
         this.initialize();
       }
     }
-    this.stop = function () {
+    this.stop = function() {
       if (isRecording) {
         if (recordedOffset == 0) {
           this.clear();
@@ -5491,11 +6911,11 @@
         }
       }
     }
-    this.result = function () {
+    this.result = function() {
       return bytes;
     }
 
-    this.push = function (sample) {
+    this.push = function(sample) {
       if (isRecording && bytes != null) {
         offset = encodeSample(sample, cfg.bitDepth, cfg.float, bytes, dv, offset);
         recordedOffset = Math.max(offset, recordedOffset);
@@ -5503,7 +6923,7 @@
         if (offset >= length * frameSize) this.stop();
       }
     }
-    this.updateConfig = function () {
+    this.updateConfig = function() {
       if (bytes == null || !this.autoUpdate) return;
 
       var prevBytes = new Uint8Array(bytes);
@@ -5517,7 +6937,7 @@
 
       prevBytes = null;
     }
-    this.setFormat = function (format) {
+    this.setFormat = function(format) {
       var prevAutoUpdate = this.autoUpdate;
       if (prevAutoUpdate) this.autoUpdate = false;
 
@@ -5535,9 +6955,9 @@
   }
 
   /**
-  * SuperPCM Gapless
-  */
-  SuperPCM.Gapless = function (pcmBytes, header, options) {
+   * SuperPCM Gapless
+   */
+  SuperPCM.Gapless = function(pcmBytes, header, options) {
     if (!pcmBytes || pcmBytes.length === 0) {
       return {
         pcm: pcmBytes
@@ -5560,7 +6980,7 @@
     var view = new DataView(pcmBytes.buffer);
 
     function abs(v) {
-      return v < 0 ? -v: v;
+      return v < 0 ? -v : v;
     }
 
     var startFrame = -1;
@@ -5568,29 +6988,29 @@
 
     // detect start
     outerStart:
-    for (var f = 0; f < frameCount; f++) {
-      for (var c = 0; c < channels; c++) {
-        var off = f * frameSize + c * bytesPerSample;
+      for (var f = 0; f < frameCount; f++) {
+        for (var c = 0; c < channels; c++) {
+          var off = f * frameSize + c * bytesPerSample;
 
-        if (abs(getSample(pcmBytes, view, off, bitDepth, float)) > threshold) {
-          startFrame = f;
-          break outerStart;
+          if (abs(getSample(pcmBytes, view, off, bitDepth, float)) > threshold) {
+            startFrame = f;
+            break outerStart;
+          }
         }
       }
-    }
 
     // detect end
     outerEnd:
-    for (var f = frameCount - 1; f >= 0; f--) {
-      for (var c = 0; c < channels; c++) {
-        var off = f * frameSize + c * bytesPerSample;
+      for (var f = frameCount - 1; f >= 0; f--) {
+        for (var c = 0; c < channels; c++) {
+          var off = f * frameSize + c * bytesPerSample;
 
-        if (abs(getSample(pcmBytes, view, off, bitDepth, float)) > threshold) {
-          endFrame = f;
-          break outerEnd;
+          if (abs(getSample(pcmBytes, view, off, bitDepth, float)) > threshold) {
+            endFrame = f;
+            break outerEnd;
+          }
         }
       }
-    }
 
     if (startFrame === -1 || endFrame === -1 || endFrame <= startFrame) {
       return {
@@ -5604,30 +7024,30 @@
       endFrame: endFrame
     };
   };
-  
+
   /**
-  * SuperPCM Amplitudo
-  * Resampling amplitudo with interpolation
-  * Support asynchronous processing on .resample()
-  */
+   * SuperPCM Amplitudo
+   * Resampling amplitudo with interpolation
+   * Support asynchronous processing on .resample()
+   */
   SuperPCM.Amplitudo = function(pcm, options = {}) {
-    var cfg = assignDefaults( {
+    var cfg = assignDefaults({
       bitDepth: SuperPCM.defaults.bitDepth,
       sampleRate: SuperPCM.defaults.sampleRate,
       float: SuperPCM.defaults.float,
       channels: SuperPCM.defaults.channels,
       interpolationMode: SuperPCM.interpolationMode
     }, options || {});
-    
+
     var dv;
     if (pcm) dv = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
-    
+
     Object.defineProperties(this, {
       pcmData: {
-        get: function () {
+        get: function() {
           return pcm;
         },
-        set: function (value) {
+        set: function(value) {
           if (pcm != value) {
             pcm = value;
             dv = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
@@ -5637,57 +7057,57 @@
         configurable: true
       },
       bitDepth: {
-        get: function () {
+        get: function() {
           return cfg.bitDepth;
         },
-        set: function (value) {
+        set: function(value) {
           if (cfg.bitDepth != value) cfg.bitDepth = value;
         },
         enumerable: true,
         configurable: true
       },
       sampleRate: {
-        get: function () {
+        get: function() {
           return cfg.sampleRate;
         },
-        set: function (value) {
+        set: function(value) {
           if (cfg.sampleRate != value) cfg.sampleRate = value;
         },
         enumerable: true,
         configurable: true
       },
       float: {
-        get: function () {
+        get: function() {
           return cfg.float;
         },
-        set: function (value) {
+        set: function(value) {
           if (cfg.float != value) cfg.float = value;
         },
         enumerable: true,
         configurable: true
       },
       float: {
-        get: function () {
+        get: function() {
           return cfg.float;
         },
-        set: function (value) {
+        set: function(value) {
           if (cfg.float != value) cfg.float = value;
         },
         enumerable: true,
         configurable: true
       },
       interpolationMode: {
-        get: function () {
+        get: function() {
           return cfg.interpolationMode;
         },
-        set: function (value) {
+        set: function(value) {
           if (cfg.interpolationMode != value) cfg.interpolationMode = value;
         },
         enumerable: true,
         configurable: true
       },
     });
-    
+
     this.get = function(offset, channel, ratio = 1) {
       return SuperPCM.getAmplitudo(pcm, offset, cfg.channels, channel, cfg.bitDepth, cfg.float, cfg.interpolationMode, dv, ratio);
     };
@@ -5697,11 +7117,11 @@
       cfg.float = format.float ?? cfg.float;
       cfg.channels = format.channels ?? cfg.channels;
     };
-    this.resample = function (options = {}) {
+    this.resample = function(options = {}) {
       var ratio = 1;
       var async = options.async ?? true;
       var asyncFrameSize = options.frameSize ?? options.asyncFrameSize ?? SuperPCM.asyncFrameSize;
-    
+
       if (options.ratio && typeof options.ratio == "number") {
         ratio = clamp(options.ratio, 0.25, 4);
       } else if (options.sampleRate && typeof options.sampleRate == "number") {
@@ -5711,22 +7131,22 @@
           SuperPCM.maximumSampleRate
         ) / cfg.sampleRate;
       }
-    
+
       var offset = 0;
       var frameSize = getBytesPerSample(cfg.bitDepth, cfg.float) * cfg.channels;
       var totalFramesSrc = Math.floor(pcm.length / frameSize);
       var totalFramesDst = Math.floor(totalFramesSrc * ratio);
-    
+
       var out = new Uint8Array(frameSize * totalFramesDst);
       var dvOut = new DataView(out.buffer);
-    
+
       var job = new SuperPCM.AsyncProcessing({
         async: !!async,
         frameSize: asyncFrameSize,
-    
-        process: function (v) {
+
+        process: function(v) {
           var i = v.index;
-    
+
           for (var c = 0; c < cfg.channels; c++) {
             offset = encodeSample(
               SuperPCM.getAmplitudo(
@@ -5749,20 +7169,20 @@
           }
         }
       });
-    
+
       job.initial({
         index: 0,
         total: totalFramesDst
       });
-    
+
       if (async) {
         return {
-          process: function (callback) {
-            return job.processing(function (e) {
+          process: function(callback) {
+            return job.processing(function(e) {
               if (e.done || e.stopped) {
                 dvOut = null;
               }
-    
+
               if (typeof callback == "function") {
                 callback({
                   done: e.done,
@@ -5776,32 +7196,32 @@
               }
             });
           },
-    
-          stop: function () {
+
+          stop: function() {
             return job.stop();
           },
-    
-          pause: function () {
+
+          pause: function() {
             return job.pause();
           },
-    
-          resume: function (callback) {
+
+          resume: function(callback) {
             return job.resume(callback);
           },
-    
-          status: function () {
+
+          status: function() {
             return job.status();
           },
-    
+
           job: job,
           pcm: out
         };
       }
-    
+
       job.processing();
-    
+
       dvOut = null;
-    
+
       return out;
     };
   }
@@ -5813,98 +7233,97 @@
    * @param {Object} to - Target format {sampleRate, channels, bitDepth, float}.
    * @param {Boolean|Object} async - false = sync, true/object = async .process()
    */
-  SuperPCM.Resample = function (pcm, from, to, async = false) {
+  SuperPCM.Resample = function(pcm, from, to, async = false) {
     to = to || {};
-  
-    to.sampleRate = to.sampleRate != null
-      ? clamp(to.sampleRate, 0, SuperPCM.maximumSampleRate)
-      : from.sampleRate;
-  
+
+    to.sampleRate = to.sampleRate != null ?
+      clamp(to.sampleRate, 0, SuperPCM.maximumSampleRate) :
+      from.sampleRate;
+
     to.channels = to.channels != null ? to.channels : from.channels;
     to.float = to.float != null ? to.float : from.float;
-    to.bitDepth = to.float
-      ? SuperPCM.BIT_DEPTH_32
-      : (to.bitDepth != null ? to.bitDepth : from.bitDepth);
-  
+    to.bitDepth = to.float ?
+      SuperPCM.BIT_DEPTH_32 :
+      (to.bitDepth != null ? to.bitDepth : from.bitDepth);
+
     var isAsync = !!async;
-    var asyncFrameSize = async != null && typeof async === "object" && async.frameSize != null
-      ? async.frameSize
-      : SuperPCM.asyncFrameSize;
-  
+    var asyncFrameSize = async != null && typeof async === "object" && async.frameSize != null ?
+      async.frameSize: SuperPCM.asyncFrameSize;
+
     var ratio = from.sampleRate / to.sampleRate;
-  
+
     var srcBytesPerSample = getBytesPerSample(from.bitDepth, from.float);
     var dstBytesPerSample = getBytesPerSample(to.bitDepth, to.float);
-  
+
     var srcFrameSize = srcBytesPerSample * from.channels;
     var dstFrameSize = dstBytesPerSample * to.channels;
-  
+
     var totalFramesSrc = Math.floor(pcm.length / srcFrameSize);
     var totalFramesDst = Math.floor(totalFramesSrc / ratio);
-  
+
     var out = new Uint8Array(totalFramesDst * dstFrameSize);
     var dvSrc = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
     var dvDst = new DataView(out.buffer);
-  
+
     var offsetDst = 0;
-  
+
     var job = new SuperPCM.AsyncProcessing({
       async: isAsync,
       frameSize: asyncFrameSize,
-  
-      process: function (v) {
+
+      process: function(v) {
         var i = v.index;
-  
+
         var srcPos = i * ratio;
         var indexLow = Math.floor(srcPos);
         var indexHigh = Math.min(indexLow + 1, totalFramesSrc - 1);
         var weight = srcPos - indexLow;
-  
+
         for (var dstCh = 0; dstCh < to.channels; dstCh++) {
           var interpolatedValue = 0;
-  
+
           // 1. DOWNMIXING LOGIC
           if (to.channels < from.channels) {
             var sumLow = 0;
             var sumHigh = 0;
-  
+
             for (var srcCh = 0; srcCh < from.channels; srcCh++) {
               var offLow = indexLow * srcFrameSize + srcCh * srcBytesPerSample;
               var offHigh = indexHigh * srcFrameSize + srcCh * srcBytesPerSample;
-  
+
               sumLow += getSample(pcm, dvSrc, offLow, from.bitDepth, from.float);
               sumHigh += getSample(pcm, dvSrc, offHigh, from.bitDepth, from.float);
             }
-  
+
             interpolatedValue =
               (sumLow / from.channels) +
               weight * ((sumHigh / from.channels) - (sumLow / from.channels));
           }
-  
+
           // 2. UPMIXING LOGIC
           else if (from.channels === 1 && to.channels > 1) {
             var offLow = indexLow * srcFrameSize;
             var offHigh = indexHigh * srcFrameSize;
-  
+
             var valLow = getSample(pcm, dvSrc, offLow, from.bitDepth, from.float);
             var valHigh = getSample(pcm, dvSrc, offHigh, from.bitDepth, from.float);
-  
+
             interpolatedValue = valLow + weight * (valHigh - valLow);
           }
-  
+
           // 3. DEFAULT CHANNEL MAPPING
           else {
             var srcCh = dstCh < from.channels ? dstCh : 0;
-  
+
             var offLow = indexLow * srcFrameSize + srcCh * srcBytesPerSample;
             var offHigh = indexHigh * srcFrameSize + srcCh * srcBytesPerSample;
-  
+
             var valLow = getSample(pcm, dvSrc, offLow, from.bitDepth, from.float);
             var valHigh = getSample(pcm, dvSrc, offHigh, from.bitDepth, from.float);
-  
+
             interpolatedValue = valLow + weight * (valHigh - valLow);
           }
-  
+
           offsetDst = encodeSample(
             interpolatedValue,
             to.bitDepth,
@@ -5916,21 +7335,21 @@
         }
       }
     });
-  
+
     job.initial({
       index: 0,
       total: totalFramesDst
     });
-  
+
     if (isAsync) {
       return {
-        process: function (callback) {
-          return job.processing(function (e) {
+        process: function(callback) {
+          return job.processing(function(e) {
             if (e.done || e.stopped) {
               dvSrc = null;
               dvDst = null;
             }
-  
+
             if (typeof callback === "function") {
               callback({
                 done: e.done,
@@ -5944,74 +7363,73 @@
             }
           });
         },
-  
-        stop: function () {
+
+        stop: function() {
           return job.stop();
         },
-  
-        pause: function () {
+
+        pause: function() {
           return job.pause();
         },
-  
-        resume: function (callback) {
+
+        resume: function(callback) {
           return job.resume(callback);
         },
-  
-        status: function () {
+
+        status: function() {
           return job.status();
         },
-  
+
         job: job,
         pcm: out
       };
     }
-  
+
     job.processing();
-  
+
     dvSrc = null;
     dvDst = null;
-  
+
     return out;
   };
 
   /**
-  * Merge multiple audio sources with full format normalization.
-  * Support asynchronous processing
-  */
-  SuperPCM.MergeAudioSource = function (sources, options = {}, async = false) {
+   * Merge multiple audio sources with full format normalization.
+   * Support asynchronous processing
+   */
+  SuperPCM.MergeAudioSource = function(sources, options = {}, async = false) {
     var audioSourcePCM = new audioSource(),
       index = 0,
       resultData = [],
       targetFormat = null,
       samplePosition = 0,
       sampleIndex = [];
-  
+
     var isAsync = !!async;
-    var asyncFrameSize = async != null && typeof async == "object" && async.frameSize != null
-      ? async.frameSize
-      : SuperPCM.asyncFrameSize;
-  
+    var asyncFrameSize = async != null && typeof async == "object" && async.frameSize != null ?
+      async.frameSize: SuperPCM.asyncFrameSize;
+
     audioSourcePCM.headers = options.headers || {};
-  
+
     function emitProgress(data) {
       if (typeof options.progress == "function") {
         options.progress(data);
       }
     }
-  
+
     function finalize(resolve) {
       var finalPCM = concatUint8Arrays(resultData);
-  
+
       resolve({
         pcm: finalPCM,
         format: targetFormat,
         sampleIndex: sampleIndex
       });
     }
-  
+
     function runTaskMaybe(task, stage, done) {
       if (task && typeof task.process == "function") {
-        task.process(function (e) {
+        task.process(function(e) {
           emitProgress({
             done: false,
             stage: stage,
@@ -6025,7 +7443,7 @@
             sampleIndex: sampleIndex,
             job: e.job
           });
-  
+
           if (e.done || e.stopped) {
             done(e.pcm || (e.result && e.result.pcm) || task.pcm);
           }
@@ -6034,7 +7452,7 @@
         done(task);
       }
     }
-  
+
     function startProcess(resolve) {
       if (sources.length !== 0 && index < sources.length) {
         audioSourcePCM.src = sources[index];
@@ -6043,11 +7461,11 @@
         finalize(resolve);
       }
     }
-  
-    return new Promise(function (resolve) {
-      audioSourcePCM.onSuccess = function (result) {
+
+    return new Promise(function(resolve) {
+      audioSourcePCM.onSuccess = function(result) {
         var currentData = result.data;
-  
+
         if (!targetFormat) {
           targetFormat = {
             sampleRate: clamp(
@@ -6055,36 +7473,35 @@
               0,
               SuperPCM.maximumSampleRate
             ),
-            bitDepth: options.bitDepth != null
-              ? (options.floatMode ? SuperPCM.BIT_DEPTH_32 : options.bitDepth)
-              : result.bitDepth,
+            bitDepth: options.bitDepth != null ?
+              (options.floatMode ? SuperPCM.BIT_DEPTH_32 : options.bitDepth) : result.bitDepth,
             float: options.floatMode != null ? options.floatMode : result.float,
             channels: options.stereo != null ? (options.stereo ? 2 : 1) : result.channels
           };
         }
-  
+
         var mismatch =
           result.sampleRate !== targetFormat.sampleRate ||
           result.channels !== targetFormat.channels ||
           result.bitDepth !== targetFormat.bitDepth ||
           result.float !== targetFormat.float;
-  
+
         function afterResample(data) {
           currentData = data;
-  
+
           if (options.gapless) {
             currentData = SuperPCM.Gapless(currentData, targetFormat, {
               threshold: options.gaplessThreshold
             }).pcm;
           }
-  
+
           function afterStereoEnhancer(data2) {
             currentData = data2;
-  
+
             sampleIndex.push(samplePosition);
             samplePosition += currentData.length;
             resultData.push(currentData);
-  
+
             emitProgress({
               done: false,
               stage: "merge",
@@ -6095,60 +7512,60 @@
               format: targetFormat,
               sampleIndex: sampleIndex
             });
-  
+
             currentData = null;
             index++;
-  
+
             if (index >= sources.length) {
               finalize(resolve);
             } else {
               startProcess(resolve);
             }
           }
-  
+
           if (options.stereo && (options.stereoEnhancer != null ? options.stereoEnhancer : true)) {
             var enhTask = SuperPCM.StereoEnhancer(
-              currentData,
-              {
+              currentData, {
                 ...targetFormat,
                 channels: result.channels
               },
               typeof options.stereoEnhancer == "object" ? options.stereoEnhancer : {},
-              isAsync ? { frameSize: asyncFrameSize } : false
+              isAsync ? {
+                frameSize: asyncFrameSize
+              } : false
             );
-  
+
             runTaskMaybe(enhTask, "stereoEnhancer", afterStereoEnhancer);
           } else {
             afterStereoEnhancer(currentData);
           }
         }
-  
+
         if (mismatch) {
           var resampleTask = SuperPCM.Resample(
-            currentData,
-            {
+            currentData, {
               sampleRate: result.sampleRate,
               channels: result.channels,
               bitDepth: result.bitDepth,
               float: result.float
-            },
-            {
+            }, {
               ...targetFormat,
               channels: options.stereo &&
-                (options.stereoEnhancer != null ? options.stereoEnhancer : false)
-                ? result.channels
-                : targetFormat.channels
+                (options.stereoEnhancer != null ? options.stereoEnhancer : false) ?
+                result.channels : targetFormat.channels
             },
-            isAsync ? { frameSize: asyncFrameSize } : false
+            isAsync ? {
+              frameSize: asyncFrameSize
+            } : false
           );
-  
+
           runTaskMaybe(resampleTask, "resample", afterResample);
         } else {
           afterResample(currentData);
         }
       };
-  
-      audioSourcePCM.onError = function () {
+
+      audioSourcePCM.onError = function() {
         emitProgress({
           done: false,
           stage: "error",
@@ -6158,24 +7575,24 @@
           format: targetFormat,
           sampleIndex: sampleIndex
         });
-  
+
         index++;
-  
+
         if (index >= sources.length) {
           finalize(resolve);
         } else {
           startProcess(resolve);
         }
       };
-  
+
       startProcess(resolve);
     });
   };
 
   /**
-  * Trimming on a specific section of PCM data
-  */
-  SuperPCM.Cut = function (pcm,
+   * Trimming on a specific section of PCM data
+   */
+  SuperPCM.Cut = function(pcm,
     format,
     options = {}) {
     var bytesPerSample = getBytesPerSample(format.bitDepth,
@@ -6185,16 +7602,16 @@
 
     if (options.durations !== undefined || options.samples !== undefined) {
       var sampleStartPrev,
-      sampleEndPrev,
-      sampleStartNext,
-      sampleEndNext,
-      ranges = options.durations || options.samples
+        sampleEndPrev,
+        sampleStartNext,
+        sampleEndNext,
+        ranges = options.durations || options.samples
       ranges.forEach(function(range, index) {
-        var maxValue = options.durations !== undefined ? totalFrames / format.sampleRate: totalFrames;
-        sampleStartPrev = clamp(index - 1 >= 0 ? ranges[index - 1][0]: 0, 0, maxValue);
-        sampleEndPrev = clamp(index - 1 >= 0 ? ranges[index - 1][1]: range, 0, maxValue);
-        sampleStartNext = clamp(index + 1 < ranges.length && ranges[index + 1][0] != null ? ranges[index + 1][0]: range, 0, maxValue);
-        sampleEndNext = clamp(index + 1 < ranges.length && ranges[index + 1][1] != null ? ranges[index + 1][1]: maxValue, 0, maxValue);
+        var maxValue = options.durations !== undefined ? totalFrames / format.sampleRate : totalFrames;
+        sampleStartPrev = clamp(index - 1 >= 0 ? ranges[index - 1][0] : 0, 0, maxValue);
+        sampleEndPrev = clamp(index - 1 >= 0 ? ranges[index - 1][1] : range, 0, maxValue);
+        sampleStartNext = clamp(index + 1 < ranges.length && ranges[index + 1][0] != null ? ranges[index + 1][0] : range, 0, maxValue);
+        sampleEndNext = clamp(index + 1 < ranges.length && ranges[index + 1][1] != null ? ranges[index + 1][1] : maxValue, 0, maxValue);
 
         if (options.durations !== undefined) {
           sampleStartPrev = Math.floor(sampleStartPrev * format.sampleRate);
@@ -6205,7 +7622,7 @@
       });
     } else {
       var sampleStart,
-      sampleEnd;
+        sampleEnd;
 
       if (options.start !== undefined || options.end !== undefined) {
         sampleStart = Math.floor(clamp(options.start ?? 0, 0, totalFrames));
@@ -6226,38 +7643,55 @@
 
 
   /**
-  * SuperPCM.StereoEnhancer
-  * - Mono  -> Stereo (widen)
-  * - Stereo -> Wider stereo (MID/SIDE safe)
-  * - Adaptive transient (strong / weak)
-  * - No hi-hat gating
-  * - Stereo width configurable
-  * - Haas configurable
-  * - Preset mode (natural / wide / extreme)
-  * - Support asynchronous processing
-  */
-  SuperPCM.StereoEnhancer = function (pcm, format, options, async = false) {
+   * SuperPCM.StereoEnhancer
+   * - Mono  -> Stereo (widen)
+   * - Stereo -> Wider stereo (MID/SIDE safe)
+   * - Adaptive transient (strong / weak)
+   * - No hi-hat gating
+   * - Stereo width configurable
+   * - Haas configurable
+   * - Preset mode (natural / wide / extreme)
+   * - Support asynchronous processing
+   */
+  SuperPCM.StereoEnhancer = function(pcm, format, options, async = false) {
     if (!format) return pcm;
     options = options || {};
-  
+
     var isAsync = !!async;
-    var asyncFrameSize = async != null && typeof async == "object" && async.frameSize != null
-      ? async.frameSize
-      : SuperPCM.asyncFrameSize;
-  
+    var asyncFrameSize = async != null && typeof async == "object" && async.frameSize != null ?
+      async.frameSize: SuperPCM.asyncFrameSize;
+
     var bitDepth = format.bitDepth;
     var isFloat = !!format.float;
     var bytesPerSample = getBytesPerSample(bitDepth, isFloat);
     var sampleRate = format.sampleRate || 48000;
-  
+
     var presets = {
-      natural: { width: 1.0, brightness: 1.0, haas: 0.1, bass: 1.05, cross: 0.02 },
-      wide:    { width: 1.2, brightness: 1.2, haas: 0.2, bass: 1.08, cross: 0.02 },
-      extreme: { width: 1.4, brightness: 1.5, haas: 0.3, bass: 1.10, cross: 0.02 }
+      natural: {
+        width: 1.0,
+        brightness: 1.0,
+        haas: 0.1,
+        bass: 1.05,
+        cross: 0.02
+      },
+      wide: {
+        width: 1.2,
+        brightness: 1.2,
+        haas: 0.2,
+        bass: 1.08,
+        cross: 0.02
+      },
+      extreme: {
+        width: 1.4,
+        brightness: 1.5,
+        haas: 0.3,
+        bass: 1.10,
+        cross: 0.02
+      }
     };
-  
+
     var preset = presets[options.mode || "wide"] || presets.wide;
-  
+
     var width = options.width ?? preset.width;
     var brightness = options.brightness ?? preset.brightness;
     var haasAmount = options.haasAmount ?? preset.haas;
@@ -6266,14 +7700,14 @@
     var cross = options.cross ?? preset.cross;
     var haasEnabled = options.haas !== false;
     var bassMono = options.bassMono !== false;
-  
+
     function createAsyncReturn(job, out, total, clean) {
       if (isAsync) {
         return {
-          process: function (callback) {
-            return job.processing(function (e) {
+          process: function(callback) {
+            return job.processing(function(e) {
               if (e.done || e.stopped) clean();
-  
+
               if (typeof callback == "function") {
                 callback({
                   done: e.done,
@@ -6287,40 +7721,40 @@
               }
             });
           },
-  
-          stop: function () {
+
+          stop: function() {
             return job.stop();
           },
-  
-          pause: function () {
+
+          pause: function() {
             return job.pause();
           },
-  
-          resume: function (callback) {
+
+          resume: function(callback) {
             return job.resume(callback);
           },
-  
-          status: function () {
+
+          status: function() {
             return job.status();
           },
-  
+
           job: job,
           pcm: out
         };
       }
-  
+
       job.processing();
       clean();
       return out;
     }
-  
+
     // =========================
     // STEREO MODE
     // =========================
     if (format.channels === 2) {
       var frameSize = bytesPerSample * 2;
       var totalFrames = Math.floor(pcm.length / frameSize);
-  
+
       if (!format._enhStateStereo) {
         format._enhStateStereo = {
           lowL: 0,
@@ -6331,320 +7765,320 @@
           haasIndex: 0
         };
       }
-  
+
       var s = format._enhStateStereo;
-  
+
       var out = new Uint8Array(pcm.length);
       var dvSrc = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
       var dvDst = new DataView(out.buffer);
-  
+
       var haasSamples = Math.floor(sampleRate * (options.haasDelay ?? 6) / 1000);
-  
+
       var job = new SuperPCM.AsyncProcessing({
         async: isAsync,
         frameSize: asyncFrameSize,
-  
-        process: function (v) {
+
+        process: function(v) {
           var i = v.index;
           var pos = i * frameSize;
-  
+
           var left = getSample(pcm, dvSrc, pos, bitDepth, isFloat);
           var right = getSample(pcm, dvSrc, pos + bytesPerSample, bitDepth, isFloat);
-  
+
           var mid = (left + right) * 0.5;
           var side = (left - right) * 0.5 * brightness;
-  
+
           s.lowL += 0.02 * (left - s.lowL);
           s.lowR += 0.02 * (right - s.lowR);
-  
+
           var bassRaw = (s.lowL + s.lowR) * 0.5;
-  
+
           var smoothCoeff = 0.02 + 0.12 * bassRoundness;
           s.bassSmooth = (s.bassSmooth || 0) + smoothCoeff * (bassRaw - (s.bassSmooth || 0));
-  
+
           var bass = s.bassSmooth;
           var drive = 1 + bassRoundness * 0.8;
           bass = Math.tanh(bass * drive);
-  
+
           if (bassMono) {
             side -= bass * 0.2;
           }
-  
+
           side *= width;
-  
+
           var maxSide = Math.abs(mid) * 0.9;
           var sideRatio = side / (maxSide + 1e-6);
           side = maxSide * Math.tanh(sideRatio);
-  
+
           s.sideSmooth += 0.1 * (side - s.sideSmooth);
           side = Math.tanh(s.sideSmooth);
-  
+
           s.haasBuffer[s.haasIndex] = side;
-  
+
           var readIndex = s.haasIndex - haasSamples;
           if (readIndex < 0) readIndex += s.haasBuffer.length;
-  
+
           var haas = s.haasBuffer[readIndex];
-  
+
           s.haasIndex = (s.haasIndex + 1) % s.haasBuffer.length;
-  
+
           if (haasEnabled) {
             var haasSafe = haasAmount / (1 + haasAmount * 0.5);
             var mix = haasSafe * 2;
-  
+
             side = side * (1 - mix) + haas * mix;
           }
-  
+
           side += haas * 0.12;
-  
+
           var outL = mid + side + bass * (bassBoost - 1);
           var outR = mid - side + bass * (bassBoost - 1);
-  
+
           var l = outL;
           var r = outR;
-  
+
           outL = l * (1 - cross) + r * cross;
           outR = r * (1 - cross) + l * cross;
-  
+
           var monoCheck = (outL + outR) * 0.5;
-  
+
           outL = outL * 0.95 + monoCheck * 0.05;
           outR = outR * 0.95 + monoCheck * 0.05;
-  
+
           outL = Math.tanh(outL);
           outR = Math.tanh(outR);
-  
+
           var outPos = i * frameSize;
           encodeSample(outL, bitDepth, isFloat, out, dvDst, outPos);
           encodeSample(outR, bitDepth, isFloat, out, dvDst, outPos + bytesPerSample);
         }
       });
-  
+
       job.initial({
         index: 0,
         total: totalFrames
       });
-  
-      return createAsyncReturn(job, out, totalFrames, function () {
+
+      return createAsyncReturn(job, out, totalFrames, function() {
         dvSrc = null;
         dvDst = null;
       });
     }
-  
+
     // =========================
     // MONO → STEREO MODE
     // =========================
     if (format.channels !== 1) return pcm;
-  
+
     var totalSamples = Math.floor(pcm.length / bytesPerSample);
-  
+
     if (!format._enhState) {
       format._enhState = {
         low: 0,
         mid: 0,
-  
+
         xL: 0,
         yL: 0,
         xR: 0,
         yR: 0,
-  
+
         prev: 0,
         env: 0,
         hold: 0,
-  
+
         monoMix: 0,
         sideMix: 1,
-  
+
         haasBuffer: new Float32Array(4096),
         haasIndex: 0
       };
     }
-  
+
     var sm = format._enhState;
-  
+
     var outMono = new Uint8Array(pcm.length * 2);
     var dvSrcMono = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
     var dvDstMono = new DataView(outMono.buffer);
-  
+
     var lowCoeff = 0.018;
     var midCoeff = 0.08;
-  
+
     var monoHaasSamples = Math.floor(sampleRate * 8 / 1000);
     var holdStrong = Math.floor(sampleRate * 0.006);
     var holdWeak = Math.floor(sampleRate * 0.002);
-  
+
     var monoJob = new SuperPCM.AsyncProcessing({
       async: isAsync,
       frameSize: asyncFrameSize,
-  
-      process: function (v) {
+
+      process: function(v) {
         var j = v.index;
         var pos = j * bytesPerSample;
-  
+
         var input = decodeSample(pcm, dvSrcMono, pos, bitDepth, isFloat).value;
-  
+
         var delta = input - sm.prev;
         sm.prev = input;
-  
+
         var abs = Math.abs(input);
         sm.env += 0.012 * (abs - sm.env);
-  
+
         var strength = Math.abs(delta);
-  
+
         var isStrong = strength > sm.env * 3.5;
         var isWeak = strength > sm.env * 1.8;
-  
+
         if (isStrong) sm.hold = holdStrong;
         else if (isWeak) sm.hold = holdWeak;
         else if (sm.hold > 0) sm.hold--;
-  
+
         sm.low += lowCoeff * (input - sm.low);
-  
+
         var smoothCoeff = 0.02 + 0.12 * bassRoundness;
         sm.lowSmooth = (sm.lowSmooth || 0) + smoothCoeff * (sm.low - (sm.lowSmooth || 0));
-  
+
         var low = sm.lowSmooth;
-  
+
         var drive = 1 + bassRoundness * 0.8;
         low = Math.tanh(low * drive);
-  
+
         sm.lowSafe = sm.lowSafe || 0;
         sm.lowSafe += 0.1 * (low - sm.lowSafe);
         low = sm.lowSafe;
-  
+
         var tmp = input - low;
-  
+
         sm.mid += midCoeff * (tmp - sm.mid);
         var mid = sm.mid;
-  
+
         var high = tmp - mid;
-  
+
         sm.highSmooth = (sm.highSmooth || 0) + 0.2 * (high - (sm.highSmooth || 0));
-  
+
         var rawHigh = tmp - mid;
         high = sm.highSmooth * 0.7 + rawHigh * 0.3;
-  
+
         var highLimit = 0.9;
         high = highLimit * Math.tanh(high / highLimit);
-  
+
         var highFactor = isStrong ? 0.6 : (isWeak ? 0.85 : 1.0);
         high *= highFactor;
-  
+
         var leftPhase = 0.34 * mid + 0.55 * high + sm.xL - 0.34 * sm.yL;
         sm.xL = mid + high;
         sm.yL = leftPhase;
-  
+
         var rightPhase = -0.34 * mid - 0.55 * high + sm.xR + 0.34 * sm.yR;
         sm.xR = mid + high;
         sm.yR = rightPhase;
-  
+
         var phaseShift = high * 0.42;
         var sidePhase = (leftPhase - rightPhase) * 0.5;
         var side = sidePhase * width * 2.5 + high * brightness * 1.15;
-  
+
         side += high * brightness * 0.3;
-  
+
         leftPhase += phaseShift;
         rightPhase -= phaseShift;
-  
+
         if (isStrong) {
           side = 0;
         }
-  
+
         high *= 0.9 + 0.2 * brightness;
-  
+
         var highEnergy = Math.abs(high);
         var isHighTransient = highEnergy > sm.env * 0.2;
-  
+
         sm.haasBuffer[sm.haasIndex] = side;
-  
+
         var readIndex = (sm.haasIndex - monoHaasSamples + sm.haasBuffer.length) % sm.haasBuffer.length;
         var nextIndex = (readIndex + 1) % sm.haasBuffer.length;
         var frac = 0.5;
-  
+
         var haas =
           sm.haasBuffer[readIndex] * (1 - frac) +
           sm.haasBuffer[nextIndex] * frac;
-  
+
         sm.haasPrev = sm.haasPrev || 0;
-  
+
         var haasOut = haas - sm.haasPrev * 0.25;
         sm.haasPrev = haas;
-  
+
         haas = haasOut;
         haas *= brightness * 0.5;
-  
+
         sm.haasIndex = (sm.haasIndex + 1) % sm.haasBuffer.length;
-  
+
         var haasSuppress = 1.0;
-  
+
         if (haasEnabled) {
           sm.transient = sm.transient || 0;
-  
+
           var target = isStrong ? 1.0 : (isWeak ? 0.5 : (isHighTransient ? 0.7 : 0.0));
           var speed = target > sm.transient ? 0.35 : 0.08;
-  
+
           sm.transient += speed * (target - sm.transient);
-  
+
           var transientAmount = sm.transient;
           haasSuppress = 1.0 - transientAmount;
-  
+
           var haasSafe = haasAmount / (1 + haasAmount * 0.5);
-  
+
           sm.haasClamp = sm.haasClamp || 1;
-  
+
           var targetClamp = isStrong ? 0.5 : (isHighTransient ? 0.3 : 1.0);
           var clampSpeed = targetClamp < sm.haasClamp ? 0.35 : 0.08;
-  
+
           sm.haasClamp += clampSpeed * (targetClamp - sm.haasClamp);
-  
+
           haas *= sm.haasClamp;
-  
+
           var mix = haasSafe * haasSuppress * 1.8;
           var energy = 1 / (1 + mix);
-  
+
           side = (side + haas * mix) * energy;
         }
-  
+
         sm.haasSmooth = sm.haasSmooth || 0;
         sm.haasSmooth += 0.2 * (haas - sm.haasSmooth);
         haas = sm.haasSmooth;
-  
+
         side += haas * 0.12 * haasSuppress;
         side *= 0.98;
         side = Math.tanh(side);
-  
+
         var left = low * bassBoost + mid + side;
         var right = low * bassBoost + mid - side;
-  
+
         var mono = (left + right) * 0.5;
-  
+
         left = left * 0.95 + mono * 0.05;
         right = right * 0.95 + mono * 0.05;
-  
+
         left = Math.tanh(left);
         right = Math.tanh(right);
-  
+
         var outPos = j * bytesPerSample * 2;
         encodeSample(left, bitDepth, isFloat, outMono, dvDstMono, outPos);
         encodeSample(right, bitDepth, isFloat, outMono, dvDstMono, outPos + bytesPerSample);
       }
     });
-  
+
     monoJob.initial({
       index: 0,
       total: totalSamples
     });
-  
+
     format.channels = 2;
-  
-    return createAsyncReturn(monoJob, outMono, totalSamples, function () {
+
+    return createAsyncReturn(monoJob, outMono, totalSamples, function() {
       format._enhState = null;
       dvSrcMono = null;
       dvDstMono = null;
     });
   };
-  
+
   /**
    * SuperPCM.NullTest
    * Compares the amplitude difference between two PCM streams (e.g., original vs decoded)
@@ -6655,42 +8089,41 @@
    * @param {Booean} async - Asynchronous processing null test
    * @returns {Object} { deltaPCM, maxDelta, rmsError, totalSamples }
    */
-  SuperPCM.NullTest = function (pcm1, pcm2, format, async = false) {
+  SuperPCM.NullTest = function(pcm1, pcm2, format, async = false) {
     format = format || {};
-  
+
     var isAsync = !!async;
-    var asyncFrameSize = async != null && typeof async == "object" && async.frameSize != null
-      ? async.frameSize
-      : SuperPCM.asyncFrameSize;
-  
+    var asyncFrameSize = async != null && typeof async == "object" && async.frameSize != null ?
+      async.frameSize: SuperPCM.asyncFrameSize;
+
     var bitDepth = format.bitDepth || SuperPCM.defaults.bitDepth;
     var isFloat = !!format.float;
     var channels = format.channels || SuperPCM.defaults.channels;
-  
+
     var bytes1 = pcm1 instanceof Uint8Array ? pcm1 : new Uint8Array(pcm1);
     var bytes2 = pcm2 instanceof Uint8Array ? pcm2 : new Uint8Array(pcm2);
-  
+
     var bytesPerSample = getBytesPerSample(bitDepth, isFloat);
     var frameSize = bytesPerSample * channels;
-  
+
     var totalFrames = Math.min(
       Math.floor(bytes1.length / frameSize),
       Math.floor(bytes2.length / frameSize)
     );
-  
+
     var totalSamples = totalFrames * channels;
-  
+
     var dv1 = new DataView(bytes1.buffer, bytes1.byteOffset, bytes1.byteLength);
     var dv2 = new DataView(bytes2.buffer, bytes2.byteOffset, bytes2.byteLength);
-  
+
     var deltaFloat = new Float32Array(totalSamples);
     var deltaPCM = new Uint8Array(totalSamples * 2);
     var dvOut = new DataView(deltaPCM.buffer);
-  
+
     var maxDelta = 0;
     var sumSquareError = 0;
     var sampleIndex = 0;
-  
+
     var result = {
       deltaFloat: deltaFloat,
       deltaPCM: deltaPCM,
@@ -6699,63 +8132,63 @@
       totalSamples: totalSamples,
       totalFrames: totalFrames
     };
-  
+
     function clean() {
       dv1 = null;
       dv2 = null;
       dvOut = null;
     }
-  
+
     var job = new SuperPCM.AsyncProcessing({
       async: isAsync,
       frameSize: asyncFrameSize,
-  
-      process: function (v) {
+
+      process: function(v) {
         var f = v.index;
-  
+
         for (var c = 0; c < channels; c++) {
           var byteOffset = f * frameSize + c * bytesPerSample;
-  
+
           var s1 = getSample(bytes1, dv1, byteOffset, bitDepth, isFloat);
           var s2 = getSample(bytes2, dv2, byteOffset, bitDepth, isFloat);
-  
+
           var delta = s1 - s2;
-  
+
           var idx = f * channels + c;
           deltaFloat[idx] = delta;
-  
+
           var absDelta = Math.abs(delta);
           if (absDelta > maxDelta) maxDelta = absDelta;
-  
+
           sumSquareError += delta * delta;
           sampleIndex++;
-  
+
           var v16 = clamp(delta, -1, 1);
-          var s16 = v16 < 0
-            ? Math.round(v16 * 0x8000)
-            : Math.round(v16 * 0x7FFF);
-  
+          var s16 = v16 < 0 ?
+            Math.round(v16 * 0x8000) :
+            Math.round(v16 * 0x7FFF);
+
           dvOut.setInt16(idx * 2, clamp(s16, -32768, 32767), true);
         }
-  
+
         result.maxDelta = maxDelta;
-        result.rmsError = sampleIndex > 0
-          ? Math.sqrt(sumSquareError / sampleIndex)
-          : 0;
+        result.rmsError = sampleIndex > 0 ?
+          Math.sqrt(sumSquareError / sampleIndex) :
+          0;
       }
     });
-  
+
     job.initial({
       index: 0,
       total: totalFrames
     });
-  
+
     if (isAsync) {
       return {
-        process: function (callback) {
-          return job.processing(function (e) {
+        process: function(callback) {
+          return job.processing(function(e) {
             if (e.done || e.stopped) clean();
-  
+
             if (typeof callback == "function") {
               callback({
                 done: e.done,
@@ -6771,31 +8204,31 @@
             }
           });
         },
-  
-        stop: function () {
+
+        stop: function() {
           return job.stop();
         },
-  
-        pause: function () {
+
+        pause: function() {
           return job.pause();
         },
-  
-        resume: function (callback) {
+
+        resume: function(callback) {
           return job.resume(callback);
         },
-  
-        status: function () {
+
+        status: function() {
           return job.status();
         },
-  
+
         job: job,
         result: result
       };
     }
-  
+
     job.processing();
     clean();
-  
+
     return result;
   };
 
@@ -6879,8 +8312,8 @@
       1
     ],
 
-    _utf8Encode: function (text) {
-      text = String(text == null ? "": text);
+    _utf8Encode: function(text) {
+      text = String(text == null ? "" : text);
       if (typeof TextEncoder !== "undefined") {
         return Array.prototype.slice.call(new TextEncoder().encode(text));
       }
@@ -6891,7 +8324,7 @@
       return bytes;
     },
 
-    _utf8Decode: function (bytes) {
+    _utf8Decode: function(bytes) {
       bytes = bytes || [];
       try {
         if (typeof TextDecoder !== "undefined") {
@@ -6910,30 +8343,30 @@
       }
     },
 
-    _crc8: function (bytes) {
+    _crc8: function(bytes) {
       var crc = 0x00;
       for (var i = 0; i < bytes.length; i++) {
         crc ^= bytes[i] & 0xFF;
         for (var b = 0; b < 8; b++) {
-          crc = (crc & 0x80) ? ((crc << 1) ^ 0x07) & 0xFF: (crc << 1) & 0xFF;
+          crc = (crc & 0x80) ? ((crc << 1) ^ 0x07) & 0xFF : (crc << 1) & 0xFF;
         }
       }
       return crc & 0xFF;
     },
 
-    _numberToBits: function (num, bitCount) {
+    _numberToBits: function(num, bitCount) {
       var bits = [];
       for (var i = bitCount - 1; i >= 0; i--) bits.push((num >> i) & 1);
       return bits;
     },
 
-    _bitsToNumber: function (bits, offset, bitCount) {
+    _bitsToNumber: function(bits, offset, bitCount) {
       var n = 0;
-      for (var i = 0; i < bitCount; i++) n = (n << 1) | (bits[offset + i] ? 1: 0);
+      for (var i = 0; i < bitCount; i++) n = (n << 1) | (bits[offset + i] ? 1 : 0);
       return n;
     },
 
-    _bytesToBits: function (bytes) {
+    _bytesToBits: function(bytes) {
       var bits = [];
       for (var i = 0; i < bytes.length; i++) {
         for (var b = 7; b >= 0; b--) bits.push((bytes[i] >> b) & 1);
@@ -6941,17 +8374,17 @@
       return bits;
     },
 
-    _bitsToBytes: function (bits) {
+    _bitsToBytes: function(bits) {
       var bytes = [];
       for (var i = 0; i + 7 < bits.length; i += 8) {
         var v = 0;
-        for (var b = 0; b < 8; b++) v = (v << 1) | (bits[i + b] ? 1: 0);
+        for (var b = 0; b < 8; b++) v = (v << 1) | (bits[i + b] ? 1 : 0);
         bytes.push(v);
       }
       return bytes;
     },
 
-    _repeatBits: function (bits, n) {
+    _repeatBits: function(bits, n) {
       n = Math.max(1, Math.floor(n || 1));
       if (n <= 1) return bits.slice();
       var out = [];
@@ -6961,32 +8394,34 @@
       return out;
     },
 
-    _majorityBits: function (bits, n) {
+    _majorityBits: function(bits, n) {
       n = Math.max(1, Math.floor(n || 1));
       if (n <= 1) return bits.slice();
       var out = [];
       for (var i = 0; i < bits.length; i += n) {
         var ones = 0,
-        count = 0;
+          count = 0;
         for (var j = 0; j < n && i + j < bits.length; j++) {
-          ones += bits[i + j] ? 1: 0;
+          ones += bits[i + j] ? 1 : 0;
           count++;
         }
-        out.push(ones >= count / 2 ? 1: 0);
+        out.push(ones >= count / 2 ? 1 : 0);
       }
       return out;
     },
 
-    _prng: function (seed) {
+    _prng: function(seed) {
       var x = seed >>> 0;
-      return function () {
-        x ^= x << 13; x ^= x >>> 17; x ^= x << 5;
+      return function() {
+        x ^= x << 13;
+        x ^= x >>> 17;
+        x ^= x << 5;
         return (x >>> 0) / 4294967296;
       };
     },
 
-    makePacketBits: function (payload, options) {
-      var opt = assignDefaults(assignDefaults( {}, SuperPCM.AudioWatermark.defaults), options || {});
+    makePacketBits: function(payload, options) {
+      var opt = assignDefaults(assignDefaults({}, SuperPCM.AudioWatermark.defaults), options || {});
       var bytes = SuperPCM.AudioWatermark._utf8Encode(payload);
       if (bytes.length > opt.payloadMaxBytes) {
         throw new Error("AudioWatermark payload is too large. Max " + opt.payloadMaxBytes + " bytes.");
@@ -6994,24 +8429,27 @@
 
       var crc = SuperPCM.AudioWatermark._crc8(bytes);
       var raw = []
-      .concat(SuperPCM.AudioWatermark.syncBits)
-      .concat(SuperPCM.AudioWatermark._numberToBits(bytes.length, 16))
-      .concat(SuperPCM.AudioWatermark._bytesToBits(bytes))
-      .concat(SuperPCM.AudioWatermark._numberToBits(crc, 8));
+        .concat(SuperPCM.AudioWatermark.syncBits)
+        .concat(SuperPCM.AudioWatermark._numberToBits(bytes.length, 16))
+        .concat(SuperPCM.AudioWatermark._bytesToBits(bytes))
+        .concat(SuperPCM.AudioWatermark._numberToBits(crc, 8));
 
       return SuperPCM.AudioWatermark._repeatBits(raw, opt.bitRepeat);
     },
 
-    _resolveFrequencyPairs: function (sampleRate, options) {
-      var cfg = assignDefaults(assignDefaults( {}, SuperPCM.AudioWatermark.defaults), options || {});
+    _resolveFrequencyPairs: function(sampleRate, options) {
+      var cfg = assignDefaults(assignDefaults({}, SuperPCM.AudioWatermark.defaults), options || {});
       var nyquist = sampleRate * 0.5;
       var maxFreq = Math.max(300, nyquist * 0.82);
       var minGap = Math.max(120, sampleRate * 0.025);
       var pairs = [];
 
       if (cfg.mode === "legacy") {
-        pairs = [[cfg.f0,
-          cfg.f1]];
+        pairs = [
+          [cfg.f0,
+            cfg.f1
+          ]
+        ];
       } else if (cfg.frequencyPairs && cfg.frequencyPairs.length) {
         for (var i = 0; i < cfg.frequencyPairs.length; i++) {
           pairs.push([Number(cfg.frequencyPairs[i][0]), Number(cfg.frequencyPairs[i][1])]);
@@ -7021,26 +8459,34 @@
         // 700/1100, 1400/1900, 2300/3000 after safety checks.
         pairs = [
           [700,
-            1100],
+            1100
+          ],
           [1400,
-            1900],
+            1900
+          ],
           [2300,
-            3000],
+            3000
+          ],
           [3300,
-            4200]
+            4200
+          ]
         ];
       } else {
         // More compression-resistant than ultrasonic-only, but less audible
         // than low-midrange tones.
         pairs = [
           [1600,
-            2300],
+            2300
+          ],
           [3200,
-            4300],
+            4300
+          ],
           [5600,
-            7100],
+            7100
+          ],
           [9200,
-            11200]
+            11200
+          ]
         ];
       }
 
@@ -7054,7 +8500,9 @@
         if (Math.abs(b - a) < minGap) b = Math.min(maxFreq, a + minGap);
         if (Math.abs(b - a) < minGap * 0.6) continue;
         if (a > b) {
-          var t = a; a = b; b = t;
+          var t = a;
+          a = b;
+          b = t;
         }
         safe.push([a, b]);
       }
@@ -7069,16 +8517,16 @@
       };
     },
 
-    _extractChannelFloat: function (pcm, format, channel) {
-      var cfg = assignDefaults( {
+    _extractChannelFloat: function(pcm, format, channel) {
+      var cfg = assignDefaults({
         sampleRate: SuperPCM.defaults.sampleRate,
         channels: SuperPCM.defaults.channels,
         bitDepth: SuperPCM.defaults.bitDepth,
         float: SuperPCM.defaults.float
       }, format || {});
 
-      var bytes = pcm instanceof Uint8Array ? pcm: new Uint8Array(pcm);
-      var bitDepth = cfg.float ? SuperPCM.BIT_DEPTH_32: cfg.bitDepth;
+      var bytes = pcm instanceof Uint8Array ? pcm : new Uint8Array(pcm);
+      var bitDepth = cfg.float ? SuperPCM.BIT_DEPTH_32 : cfg.bitDepth;
       var isFloat = !!cfg.float;
       var bps = getBytesPerSample(bitDepth, isFloat);
       var frameSize = bps * cfg.channels;
@@ -7104,16 +8552,16 @@
       };
     },
 
-    _goertzelPower: function (samples, start, size, sampleRate, freq) {
+    _goertzelPower: function(samples, start, size, sampleRate, freq) {
       var omega = 2 * Math.PI * freq / sampleRate;
       var coeff = 2 * Math.cos(omega);
       var s0 = 0,
-      s1 = 0,
-      s2 = 0;
+        s1 = 0,
+        s2 = 0;
 
       for (var i = 0; i < size; i++) {
         var idx = start + i;
-        var x = idx >= 0 && idx < samples.length ? samples[idx]: 0;
+        var x = idx >= 0 && idx < samples.length ? samples[idx] : 0;
         var w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / Math.max(1, size - 1));
         x *= w;
         s0 = x + coeff * s1 - s2;
@@ -7124,7 +8572,7 @@
       return s1 * s1 + s2 * s2 - coeff * s1 * s2;
     },
 
-    _readBitAtPairs: function (samples, start, size, sampleRate, pairs) {
+    _readBitAtPairs: function(samples, start, size, sampleRate, pairs) {
       var votes = 0;
       var confidenceSum = 0;
       var p0Total = 0;
@@ -7136,19 +8584,19 @@
         var total = p0 + p1 + 1e-20;
         p0Total += p0;
         p1Total += p1;
-        votes += p1 > p0 ? 1: -1;
+        votes += p1 > p0 ? 1 : -1;
         confidenceSum += Math.abs(p1 - p0) / total;
       }
 
       return {
-        bit: votes >= 0 ? 1: 0,
+        bit: votes >= 0 ? 1 : 0,
         p0: p0Total,
         p1: p1Total,
         confidence: confidenceSum / Math.max(1, pairs.length)
       };
     },
 
-    _readRepeatedBitsAt: function (samples, frameStart, count, bitFrames, sampleRate, pairs, bitRepeat) {
+    _readRepeatedBitsAt: function(samples, frameStart, count, bitFrames, sampleRate, pairs, bitRepeat) {
       var raw = [];
       var conf = [];
       var details = [];
@@ -7171,11 +8619,12 @@
       var reducedConf = [];
       for (var b = 0; b < bits.length; b++) {
         var sum = 0,
-        n = 0;
+          n = 0;
         for (var j = 0; j < bitRepeat; j++) {
           var idx = b * bitRepeat + j;
           if (idx < conf.length) {
-            sum += conf[idx]; n++;
+            sum += conf[idx];
+            n++;
           }
         }
         reducedConf.push(sum / Math.max(1, n));
@@ -7189,8 +8638,8 @@
       };
     },
 
-    embedPCM: function (pcm, format, payload, options) {
-      var cfg = assignDefaults( {
+    embedPCM: function(pcm, format, payload, options) {
+      var cfg = assignDefaults({
         sampleRate: SuperPCM.defaults.sampleRate,
         channels: SuperPCM.defaults.channels,
         bitDepth: SuperPCM.defaults.bitDepth,
@@ -7204,9 +8653,9 @@
       var bits = [];
       for (var r = 0; r < repeat; r++) bits = bits.concat(packet);
 
-      var input = pcm instanceof Uint8Array ? pcm: new Uint8Array(pcm);
+      var input = pcm instanceof Uint8Array ? pcm : new Uint8Array(pcm);
       var output = new Uint8Array(input);
-      var bitDepth = cfg.float ? SuperPCM.BIT_DEPTH_32: cfg.bitDepth;
+      var bitDepth = cfg.float ? SuperPCM.BIT_DEPTH_32 : cfg.bitDepth;
       var isFloat = !!cfg.float;
       var bps = getBytesPerSample(bitDepth, isFloat);
       var frameSize = bps * cfg.channels;
@@ -7221,7 +8670,7 @@
       var phaseRand = SuperPCM.AudioWatermark._prng(0xA17D3 + packet.length * 131 + cfg.sampleRate);
 
       for (var bitIndex = 0; bitIndex < bits.length; bitIndex++) {
-        var bit = bits[bitIndex] ? 1: 0;
+        var bit = bits[bitIndex] ? 1 : 0;
         var bitStart = startFrame + bitIndex * bitFrames;
 
         for (var i = 0; i < bitFrames; i++) {
@@ -7235,8 +8684,8 @@
 
           var tone = 0;
           for (var p = 0; p < wm.pairs.length; p++) {
-            var freq = bit ? wm.pairs[p][1]: wm.pairs[p][0];
-            var phase = opt.randomizePhase ? (p + 1) * 2 * Math.PI * phaseRand(): 0;
+            var freq = bit ? wm.pairs[p][1] : wm.pairs[p][0];
+            var phase = opt.randomizePhase ? (p + 1) * 2 * Math.PI * phaseRand() : 0;
             tone += Math.sin(2 * Math.PI * freq * (i / cfg.sampleRate) + phase);
           }
           tone = (tone / Math.max(1, wm.pairs.length)) * opt.strength * env;
@@ -7268,8 +8717,8 @@
       };
     },
 
-    spectrogramTracePCM: function (pcm, format, options) {
-      var cfg = assignDefaults( {
+    spectrogramTracePCM: function(pcm, format, options) {
+      var cfg = assignDefaults({
         sampleRate: SuperPCM.defaults.sampleRate,
         channels: SuperPCM.defaults.channels,
         bitDepth: SuperPCM.defaults.bitDepth,
@@ -7278,7 +8727,7 @@
 
       var wm = SuperPCM.AudioWatermark._resolveFrequencyPairs(cfg.sampleRate, options);
       var opt = wm.cfg;
-      var extracted = SuperPCM.AudioWatermark._extractChannelFloat(pcm, cfg, opt.channel === "all" ? "mix": opt.channel);
+      var extracted = SuperPCM.AudioWatermark._extractChannelFloat(pcm, cfg, opt.channel === "all" ? "mix" : opt.channel);
       var bitFrames = Math.max(64, Math.floor(opt.bitDuration * cfg.sampleRate));
       var step = Math.max(1, Math.floor(bitFrames * (opt.scanStepRatio || 0.33)));
       var maxFrames = extracted.frames;
@@ -7288,7 +8737,11 @@
       for (var start = 0; start + bitFrames <= maxFrames; start += step) {
         var b = SuperPCM.AudioWatermark._readBitAtPairs(extracted.samples, start, bitFrames, cfg.sampleRate, wm.pairs);
         trace.push({
-          time: start / cfg.sampleRate, p0: b.p0, p1: b.p1, bit: b.bit, confidence: b.confidence
+          time: start / cfg.sampleRate,
+          p0: b.p0,
+          p1: b.p1,
+          bit: b.bit,
+          confidence: b.confidence
         });
       }
 
@@ -7304,7 +8757,7 @@
     },
 
 
-    _bytesToBase64: function (bytes) {
+    _bytesToBase64: function(bytes) {
       bytes = SuperPCM.AudioWatermark._normalizeBytes(bytes);
       var s = "";
       for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i] & 0xFF);
@@ -7316,18 +8769,18 @@
       var out = "";
       for (var p = 0; p < bytes.length; p += 3) {
         var a = bytes[p] || 0;
-        var b = p + 1 < bytes.length ? bytes[p + 1]: 0;
-        var c = p + 2 < bytes.length ? bytes[p + 2]: 0;
+        var b = p + 1 < bytes.length ? bytes[p + 1] : 0;
+        var c = p + 2 < bytes.length ? bytes[p + 2] : 0;
         var n = (a << 16) | (b << 8) | c;
         out += chars[(n >> 18) & 63];
         out += chars[(n >> 12) & 63];
-        out += p + 1 < bytes.length ? chars[(n >> 6) & 63]: "=";
-        out += p + 2 < bytes.length ? chars[n & 63]: "=";
+        out += p + 1 < bytes.length ? chars[(n >> 6) & 63] : "=";
+        out += p + 2 < bytes.length ? chars[n & 63] : "=";
       }
       return out;
     },
 
-    _base64ToBytes: function (base64) {
+    _base64ToBytes: function(base64) {
       base64 = String(base64 || "").replace(/\s+/g, "");
       if (typeof atob !== "undefined") {
         var bin = atob(base64);
@@ -7341,7 +8794,7 @@
       var clean = base64.replace(/=+$/, "");
       var bytes = [];
       var buffer = 0,
-      bits = 0;
+        bits = 0;
       for (var p = 0; p < clean.length; p++) {
         var val = chars.indexOf(clean.charAt(p));
         if (val < 0) continue;
@@ -7355,7 +8808,7 @@
       return new Uint8Array(bytes);
     },
 
-    _normalizeBytes: function (bytes) {
+    _normalizeBytes: function(bytes) {
       if (bytes == null) return new Uint8Array(0);
       if (bytes instanceof Uint8Array) return bytes;
       if (bytes instanceof ArrayBuffer) return new Uint8Array(bytes);
@@ -7365,7 +8818,7 @@
       return new Uint8Array(bytes);
     },
 
-    _normalizeBitmap: function (bitmap) {
+    _normalizeBitmap: function(bitmap) {
       if (!bitmap || !bitmap.width || !bitmap.height || !bitmap.data) {
         throw new Error("AudioWatermark bitmap must be { width, height, data }.");
       }
@@ -7377,7 +8830,7 @@
       var out = new Uint8Array(total);
 
       for (var i = 0; i < total; i++) {
-        out[i] = data[i] ? 1: 0;
+        out[i] = data[i] ? 1 : 0;
       }
 
       return {
@@ -7388,8 +8841,8 @@
       };
     },
 
-    bitmapFromCanvas: function (canvas, options) {
-      var opt = assignDefaults( {
+    bitmapFromCanvas: function(canvas, options) {
+      var opt = assignDefaults({
         width: null,
         height: null,
         threshold: 128,
@@ -7402,8 +8855,8 @@
       var width = Math.max(1, Math.floor(opt.width || canvas.width || 1));
       var height = Math.max(1, Math.floor(opt.height || canvas.height || 1));
       var temp,
-      ctx,
-      imageData;
+        ctx,
+        imageData;
 
       if (canvas.data && canvas.width && canvas.height) {
         // ImageData-like input.
@@ -7434,12 +8887,12 @@
         for (var x = 0; x < width; x++) {
           var idx = (y * width + x) * 4;
           var r = src[idx] || 0,
-          g = src[idx + 1] || 0,
-          b = src[idx + 2] || 0,
-          a = src[idx + 3] == null ? 255: src[idx + 3];
+            g = src[idx + 1] || 0,
+            b = src[idx + 2] || 0,
+            a = src[idx + 3] == null ? 255 : src[idx + 3];
           var lum = 0.299 * r + 0.587 * g + 0.114 * b;
-          var bit = a >= opt.alphaThreshold && lum >= opt.threshold ? 1: 0;
-          if (opt.invert) bit = bit ? 0: 1;
+          var bit = a >= opt.alphaThreshold && lum >= opt.threshold ? 1 : 0;
+          if (opt.invert) bit = bit ? 0 : 1;
           out[y * width + x] = bit;
         }
       }
@@ -7452,8 +8905,8 @@
       };
     },
 
-    bitmapFromText: function (text, options) {
-      var opt = assignDefaults( {
+    bitmapFromText: function(text, options) {
+      var opt = assignDefaults({
         font: "bold 20px sans-serif",
         padding: 4,
         width: null,
@@ -7472,17 +8925,17 @@
         throw new Error("bitmapFromText needs Canvas/OffscreenCanvas support.");
       }
 
-      var measureCanvas = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(1, 1): document.createElement("canvas");
+      var measureCanvas = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(1, 1) : document.createElement("canvas");
       var measure = measureCanvas.getContext("2d");
       measure.font = opt.font;
-      var metrics = measure.measureText(String(text == null ? "": text));
+      var metrics = measure.measureText(String(text == null ? "" : text));
       var measuredWidth = Math.ceil(metrics.width + opt.padding * 2);
       var fontSizeMatch = /([0-9]+(?:\.[0-9]+)?)px/.exec(opt.font);
-      var fontSize = fontSizeMatch ? Number(fontSizeMatch[1]): 20;
+      var fontSize = fontSizeMatch ? Number(fontSizeMatch[1]) : 20;
 
       var width = Math.max(1, Math.floor(opt.width || Math.min(opt.maxWidth, Math.max(16, measuredWidth))));
       var height = Math.max(1, Math.floor(opt.height || Math.min(opt.maxHeight, Math.max(12, fontSize + opt.padding * 2))));
-      var canvas = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(width, height): document.createElement("canvas");
+      var canvas = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(width, height) : document.createElement("canvas");
       canvas.width = width;
       canvas.height = height;
 
@@ -7495,7 +8948,7 @@
       ctx.fillStyle = opt.fillStyle;
       ctx.textAlign = opt.textAlign;
       ctx.textBaseline = opt.textBaseline;
-      ctx.fillText(String(text == null ? "": text), width / 2, height / 2, width - opt.padding * 2);
+      ctx.fillText(String(text == null ? "" : text), width / 2, height / 2, width - opt.padding * 2);
 
       var bitmap = SuperPCM.AudioWatermark.bitmapFromCanvas(canvas, {
         width: width,
@@ -7503,12 +8956,12 @@
         threshold: opt.threshold,
         invert: opt.invert
       });
-      bitmap.text = String(text == null ? "": text);
+      bitmap.text = String(text == null ? "" : text);
       return bitmap;
     },
 
-    bitmapToPayload: function (bitmap, options) {
-      var opt = assignDefaults( {
+    bitmapToPayload: function(bitmap, options) {
+      var opt = assignDefaults({
         label: ""
       }, options || {});
       var bm = SuperPCM.AudioWatermark._normalizeBitmap(bitmap);
@@ -7529,12 +8982,12 @@
       }
 
       var b64 = SuperPCM.AudioWatermark._bytesToBase64(packed);
-      var label = opt.label ? String(opt.label).replace(/[|\n\r]/g, " "): "";
+      var label = opt.label ? String(opt.label).replace(/[|\n\r]/g, " ") : "";
       return "SPWM_BITMAP_V1|" + label + "|" + b64;
     },
 
-    payloadToBitmap: function (payload) {
-      payload = String(payload == null ? "": payload);
+    payloadToBitmap: function(payload) {
+      payload = String(payload == null ? "" : payload);
       if (payload.indexOf("SPWM_BITMAP_V1|") !== 0) return null;
       var parts = payload.split("|");
       if (parts.length < 3) return null;
@@ -7563,23 +9016,26 @@
       };
     },
 
-    bitmapToASCII: function (bitmap, options) {
-      var opt = assignDefaults( {
-        on: "█", off: " "
+    bitmapToASCII: function(bitmap, options) {
+      var opt = assignDefaults({
+        on: "█",
+        off: " "
       }, options || {});
       var bm = SuperPCM.AudioWatermark._normalizeBitmap(bitmap);
       var rows = [];
       for (var y = 0; y < bm.height; y++) {
         var row = "";
-        for (var x = 0; x < bm.width; x++) row += bm.data[y * bm.width + x] ? opt.on: opt.off;
+        for (var x = 0; x < bm.width; x++) row += bm.data[y * bm.width + x] ? opt.on : opt.off;
         rows.push(row);
       }
       return rows.join("\n");
     },
 
-    bitmapToCanvas: function (bitmap, canvas, options) {
-      var opt = assignDefaults( {
-        scale: 4, on: "#fff", off: "#000"
+    bitmapToCanvas: function(bitmap, canvas, options) {
+      var opt = assignDefaults({
+        scale: 4,
+        on: "#fff",
+        off: "#000"
       }, options || {});
       var bm = SuperPCM.AudioWatermark._normalizeBitmap(bitmap);
       var scale = Math.max(1, Math.floor(opt.scale || 1));
@@ -7604,8 +9060,8 @@
       return canvas;
     },
 
-    embedBitmapPCM: function (pcm, format, source, options) {
-      var opt = assignDefaults( {
+    embedBitmapPCM: function(pcm, format, source, options) {
+      var opt = assignDefaults({
         bitmap: null,
         sourceType: "auto", // "auto", "bitmap", "canvas", "text"
         bitmapOptions: {},
@@ -7629,13 +9085,13 @@
       return result;
     },
 
-    detectBitmapPCM: function (pcm, format, options) {
+    detectBitmapPCM: function(pcm, format, options) {
       var detected = SuperPCM.AudioWatermark.detectPCM(pcm, format, options || {});
       var bitmaps = [];
       for (var i = 0; i < detected.matches.length; i++) {
         var bm = SuperPCM.AudioWatermark.payloadToBitmap(detected.matches[i].text);
         if (bm) {
-          bitmaps.push(assignDefaults(assignDefaults( {}, detected.matches[i]), {
+          bitmaps.push(assignDefaults(assignDefaults({}, detected.matches[i]), {
             bitmap: bm,
             ascii: SuperPCM.AudioWatermark.bitmapToASCII(bm)
           }));
@@ -7645,8 +9101,8 @@
       return detected;
     },
 
-    detectPCM: function (pcm, format, options) {
-      var cfg = assignDefaults( {
+    detectPCM: function(pcm, format, options) {
+      var cfg = assignDefaults({
         sampleRate: SuperPCM.defaults.sampleRate,
         channels: SuperPCM.defaults.channels,
         bitDepth: SuperPCM.defaults.bitDepth,
@@ -7656,7 +9112,7 @@
       var wm = SuperPCM.AudioWatermark._resolveFrequencyPairs(cfg.sampleRate, options);
       var opt = wm.cfg;
       var bitRepeat = Math.max(1, Math.floor(opt.bitRepeat || 1));
-      var extracted = SuperPCM.AudioWatermark._extractChannelFloat(pcm, cfg, opt.channel === "all" ? "mix": opt.channel);
+      var extracted = SuperPCM.AudioWatermark._extractChannelFloat(pcm, cfg, opt.channel === "all" ? "mix" : opt.channel);
       var bitFrames = Math.max(64, Math.floor(opt.bitDuration * cfg.sampleRate));
       var step = Math.max(1, Math.floor(bitFrames * (opt.scanStepRatio || 0.33)));
       var maxFrames = extracted.frames;
@@ -7680,7 +9136,9 @@
         var syncScore = correct / sync.length;
         var avgSyncConfidence = confidenceSum / sync.length;
         trace.push({
-          time: start / cfg.sampleRate, syncScore: syncScore, confidence: avgSyncConfidence
+          time: start / cfg.sampleRate,
+          syncScore: syncScore,
+          confidence: avgSyncConfidence
         });
 
         if (syncScore < minScore) continue;
@@ -7711,7 +9169,8 @@
         var confCount = 1;
         var allConf = lenRead.confidence.concat(payloadRead.confidence).concat(crcRead.confidence);
         for (var ci = 0; ci < allConf.length; ci++) {
-          totalConf += allConf[ci] || 0; confCount++;
+          totalConf += allConf[ci] || 0;
+          confCount++;
         }
 
         // Accept CRC matches immediately. If CRC fails, still report a low-trust
@@ -7732,8 +9191,8 @@
       }
 
       // Prefer verified matches first.
-      matches.sort(function (a, b) {
-        if (a.crcOk !== b.crcOk) return a.crcOk ? -1: 1;
+      matches.sort(function(a, b) {
+        if (a.crcOk !== b.crcOk) return a.crcOk ? -1 : 1;
         return b.confidence - a.confidence;
       });
 
@@ -7742,7 +9201,8 @@
         trace: trace,
         frequencyPairs: wm.pairs,
         frequencies: {
-          f0: wm.pairs[0][0], f1: wm.pairs[0][1]
+          f0: wm.pairs[0][0],
+          f1: wm.pairs[0][1]
         },
         bitDuration: opt.bitDuration,
         bitRepeat: bitRepeat
@@ -7750,6 +9210,5 @@
     }
   };
 
-  // Attach to global
-  global.SuperPCM = SuperPCM;
-})(typeof window !== 'undefined' ? window: (typeof globalThis !== 'undefined' ? globalThis: this));
+  return SuperPCM;
+});

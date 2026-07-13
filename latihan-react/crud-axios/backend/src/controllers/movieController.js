@@ -1,8 +1,5 @@
 const { connectionPool } = require("../config/database")
 
-const localhostPort = Number(process.env.PORT) || 3000;
-const BASE_URL = `http://localhost:${localhostPort}`;
-
 const createMovie = (req, res) => {
     let {title, year} = req.body;
     let queryText = `INSERT INTO movies (title, year) VALUES ('${title}', ${year})`;
@@ -152,8 +149,6 @@ const readMovies = (req, res) => {
 }
 
 module.exports = {
-    localhostPort,
-    
     createMovie,
     updateMovie,
     deleteMovie,
