@@ -7,6 +7,8 @@ const BASE_URL = import.meta.env.VITE_BASE_URL;
 const CrudAxios = () => {
     const [data, setData] = useState([])
     const [input, setInput] = useState()
+    const [editId, setEditId] = useState(null)
+    const [editInput, setEditInput] = useState({ title: '', year: '' })
 
     const fetchData = async () => {
         try {
@@ -32,7 +34,33 @@ const CrudAxios = () => {
         } catch(err) {
             console.error(err)
         } 
-    }   
+    }
+    const updateMovie = async (id) => {
+        try {
+            await axios.post(`${BASE_URL}/movie/api/update`, {
+                id,
+                title: editInput.title,
+                year: editInput.year,
+            })
+            cancelEdit()
+            fetchData()
+        } catch(err) {
+            console.error(err)
+        }
+    }
+
+    const startEdit = (item) => {
+        setEditId(item.id)
+        setEditInput({ title: item.title, year: item.year })
+    }
+    const cancelEdit = () => {
+        setEditId(null)
+        setEditInput({ title: '', year: '' })
+    }
+    const handleEditChange = (event) => {
+        let { name, value } = event.target;
+        setEditInput({ ...editInput, [name]: value })
+    }
 
     const handleChange = (event) => {
         let {name, value} = event.target;
@@ -75,13 +103,50 @@ const CrudAxios = () => {
                             </tr>
                         ) : (
                             data.map((item, index) => {
+                                const isEditing = editId === item.id
                                 return (
                                     <tr key={item.id}>
                                         <td>{index + 1}.</td>
-                                        <td>{item.title}</td>
-                                        <td>{item.year}</td>
                                         <td>
-                                            <button className="btn-delete" onClick={() => deleteMovie(item.id)}>Hapus</button>
+                                            {isEditing ? (
+                                                <input
+                                                    className="input-inline"
+                                                    type="text"
+                                                    name="title"
+                                                    value={editInput.title}
+                                                    onChange={handleEditChange}
+                                                />
+                                            ) : (
+                                                item.title
+                                            )}
+                                        </td>
+                                        <td>
+                                            {isEditing ? (
+                                                <input
+                                                    className="input-inline"
+                                                    type="number"
+                                                    name="year"
+                                                    value={editInput.year}
+                                                    onChange={handleEditChange}
+                                                />
+                                            ) : (
+                                                item.year
+                                            )}
+                                        </td>
+                                        <td>
+                                            <div className="action-group">
+                                                {isEditing ? (
+                                                    <>
+                                                        <button className="btn-save" onClick={() => updateMovie(item.id)}>Simpan</button>
+                                                        <button className="btn-cancel" onClick={cancelEdit}>Batal</button>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <button className="btn-edit" onClick={() => startEdit(item)}>Edit</button>
+                                                        <button className="btn-delete" onClick={() => deleteMovie(item.id)}>Hapus</button>
+                                                    </>
+                                                )}
+                                            </div>
                                         </td>
                                     </tr>
                                 )

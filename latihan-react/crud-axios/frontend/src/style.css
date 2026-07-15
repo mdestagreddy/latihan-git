@@ -166,9 +166,18 @@
   text-align: center;
 }
 
-/* ===== Delete button ===== */
-.btn-delete {
-  background-color: var(--danger);
+/* ===== Action buttons ===== */
+.action-group {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.btn-delete,
+.btn-edit,
+.btn-save,
+.btn-cancel {
   color: #fff;
   border: none;
   padding: 7px 16px;
@@ -179,12 +188,59 @@
   transition: background-color 0.2s, transform 0.05s;
 }
 
+.btn-delete {
+  background-color: var(--danger);
+}
 .btn-delete:hover {
   background-color: var(--danger-hover);
 }
 
-.btn-delete:active {
+.btn-edit {
+  background-color: #f59e0b;
+}
+.btn-edit:hover {
+  background-color: #d97706;
+}
+
+.btn-save {
+  background-color: #16a34a;
+}
+.btn-save:hover {
+  background-color: #15803d;
+}
+
+.btn-cancel {
+  background-color: #64748b;
+}
+.btn-cancel:hover {
+  background-color: #475569;
+}
+
+.btn-delete:active,
+.btn-edit:active,
+.btn-save:active,
+.btn-cancel:active {
   transform: translateY(1px);
+}
+
+/* ===== Inline edit input ===== */
+.input-inline {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  font-size: 14px;
+  color: var(--text-dark);
+  background-color: #fbfcfe;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.input-inline:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(4, 90, 170, 0.12);
+  background-color: #fff;
 }
 
 /* ===== Empty state ===== */
