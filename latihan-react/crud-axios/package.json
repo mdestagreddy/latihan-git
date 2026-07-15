@@ -4,8 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "server": "npm run swagger --prefix backend",
-    "client": "npm run dev --prefix frontend",
+    "server": "npm --prefix backend run swagger",
+    "client": "npm --prefix frontend run dev",
     "dev": "concurrently \"npm run server\" \"npm run client\""
   },
   "keywords": [],

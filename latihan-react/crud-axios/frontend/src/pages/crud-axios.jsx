@@ -44,15 +44,16 @@ const CrudAxios = () => {
     }, [])
 
     return (
-        <>
-            <h1>CRUD AXIOS</h1>
+        <div className="crud-container">
+            <h1 className="crud-title">CRUD AXIOS</h1>
+            <p className="crud-subtitle">Kelola daftar film favoritmu</p>
             <div className="div-form-movie">
                 <form onSubmit={createMovie}>
                     <label htmlFor="title">Judul</label>
-                    <input type="text" onChange={handleChange} id="title" name="title" placeholder="Judul" required />
+                    <input type="text" onChange={handleChange} id="title" name="title" placeholder="Masukkan judul film" required />
 
                     <label htmlFor="year">Tahun rilis</label>
-                    <input type="number" onChange={handleChange} id="year" name="year" placeholder="Tahun" required />
+                    <input type="number" onChange={handleChange} id="year" name="year" placeholder="Masukkan tahun rilis" required />
 
                     <input type="submit" value="Kirim" />
                 </form>
@@ -68,20 +69,28 @@ const CrudAxios = () => {
                         </tr>
                     </thead>
                     <tbody>
-                        {data.map((item, index) => {
-                            return (
-                                <tr key={item.id}>
-                                    <td>{item.id}.</td>
-                                    <td>{item.title}</td>
-                                    <td>{item.year}</td>
-                                    <td><button onClick={() => deleteMovie(item.id)}>Hapus</button></td>
-                                </tr>
-                            )
-                        })}
+                        {data.length === 0 ? (
+                            <tr className="empty-row">
+                                <td colSpan={4}>Belum ada data film</td>
+                            </tr>
+                        ) : (
+                            data.map((item, index) => {
+                                return (
+                                    <tr key={item.id}>
+                                        <td>{index + 1}.</td>
+                                        <td>{item.title}</td>
+                                        <td>{item.year}</td>
+                                        <td>
+                                            <button className="btn-delete" onClick={() => deleteMovie(item.id)}>Hapus</button>
+                                        </td>
+                                    </tr>
+                                )
+                            })
+                        )}
                     </tbody>
                 </table>
             </div>
-        </>
+        </div>
     )
 }
 
