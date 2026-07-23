@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
 import axios from 'axios'
+import { useNavigate } from 'react-router';
 
 const BASE_URL = import.meta.env.VITE_BASE_URL;
 
 const TableCategory = () => {
     const [data, setData] = useState([])
-    const [input, setInput] = useState()
     const [editId, setEditId] = useState(null)
     const [editInput, setEditInput] = useState({ name: '', description: '' })
+
+    let navigate = useNavigate()
 
     const fetchData = async () => {
         try {
@@ -15,15 +17,6 @@ const TableCategory = () => {
             setData(res.data.items)
         } catch(err) {
             console.error(err);
-        }
-    }
-    const createCategory = async (event) => {
-        event.preventDefault();
-        try {
-            await axios.post(`${BASE_URL}/category/api/new`, input);
-            fetchData()
-        } catch (err) {
-            console.error(err)
         }
     }
     const deleteCategory = async (id) => {
@@ -60,10 +53,8 @@ const TableCategory = () => {
         let { name, value } = event.target;
         setEditInput({ ...editInput, [name]: value })
     }
-
-    const handleChange = (event) => {
-        let {name, value} = event.target;
-        setInput({...input, [name]: value});
+    const handleCreateClick = () => {
+        navigate('create')
     }
 
     useEffect(() => {
@@ -74,17 +65,7 @@ const TableCategory = () => {
         <div className="crud-container">
             <h1 className="crud-title">Kategori Film</h1>
             <p className="crud-subtitle">Temukan film menurut kategori</p>
-            <div className="div-form">
-                <form onSubmit={createCategory}>
-                    <label htmlFor="name">Kategori</label>
-                    <input type="text" maxLength={100} onChange={handleChange} id="name" name="name" placeholder="Masukkan nama kategori" required />
-
-                    <label htmlFor="description">Deskripsi</label>
-                    <input type="text" onChange={handleChange} id="description" name="description" placeholder="Masukkan deskripsi" required />
-
-                    <input type="submit" value="Kirim" />
-                </form>
-            </div>
+            <button onClick={handleCreateClick} className="btn" style={{ marginBottom: '16px' }}>Buat kategori</button>
             <div className="div-table">
                 <table>
                     <thead>

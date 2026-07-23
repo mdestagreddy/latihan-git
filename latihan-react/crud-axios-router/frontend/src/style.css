@@ -43,6 +43,8 @@ nav {
   padding: 32px 20px 56px;
   font-family: 'Segoe UI', Arial, Helvetica, sans-serif;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
 }
 
 .crud-title {
@@ -200,6 +202,16 @@ nav {
   flex-wrap: wrap;
 }
 
+.btn {
+  color: #fff;
+  border: none;
+  padding: 7px 16px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+  transition: background-color 0.2s, transform 0.05s;
+}
 .btn-delete,
 .btn-edit,
 .btn-save,
@@ -238,11 +250,11 @@ nav {
   background-color: #15803d;
 }
 
-.btn-cancel {
+.btn, .btn-cancel {
   background-color: #64748b;
 }
 
-.btn-cancel:hover {
+.btn:hover, .btn-cancel:hover {
   background-color: #475569;
 }
 

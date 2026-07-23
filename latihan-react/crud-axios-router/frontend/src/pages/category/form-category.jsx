@@ -1,19 +1,22 @@
 import { useEffect, useState } from 'react'
 import axios from 'axios'
+import { useNavigate } from 'react-router';
 
 const BASE_URL = import.meta.env.VITE_BASE_URL;
 
 const FormCategory = () => {
-    const [data, setData] = useState([])
     const [input, setInput] = useState()
-    const [editId, setEditId] = useState(null)
-    const [editInput, setEditInput] = useState({ name: '', description: '' })
+    let navigate = useNavigate()
+
+    const handleBack = () => {
+        navigate(-1)
+    }
 
     const createCategory = async (event) => {
         event.preventDefault();
         try {
             await axios.post(`${BASE_URL}/category/api/new`, input);
-            fetchData()
+            handleBack()
         } catch (err) {
             console.error(err)
         }
@@ -27,7 +30,8 @@ const FormCategory = () => {
     return (
         <div className="crud-container">
             <h1 className="crud-title">Buat Kategori</h1>
-            <p className="crud-subtitle">Silahkan buat kategori yang Anda masukkan</p>
+            <p className="crud-subtitle">Silahkan membuat kategori film Anda</p>
+            <button onClick={handleBack} className="btn" style={{ marginBottom: '16px' }}>Kembali ke tabel kategori</button>
             <div className="div-form">
                 <form onSubmit={createCategory}>
                     <label htmlFor="name">Kategori</label>
@@ -42,3 +46,5 @@ const FormCategory = () => {
         </div>
     )
 }
+
+export default FormCategory
