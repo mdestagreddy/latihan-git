@@ -11,12 +11,18 @@
 }
 
 nav {
+  display: flex;
+  justify-content: center;
+  background-color: #333333;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+
   & ul {
     list-style-type: none;
     margin: 0;
     padding: 0;
-    overflow: hidden;
-    background-color: #333333;
+
 
     & li {
       float: left;
@@ -90,7 +96,8 @@ nav {
   letter-spacing: 0.3px;
 }
 
-.div-form input {
+.div-form input,
+.div-form textarea {
   width: 100%;
   padding: 12px 14px;
   margin: 0 0 18px;
@@ -102,10 +109,17 @@ nav {
   box-sizing: border-box;
   color: var(--text-dark);
   font-size: 15px;
+  font-family: inherit;
   transition: border-color 0.2s, box-shadow 0.2s;
+  resize: none;
 }
 
-.div-form input:focus {
+.div-form textarea {
+  height: 144px;
+}
+
+.div-form input:focus,
+.div-form textarea:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(4, 90, 170, 0.12);
   background-color: #fff;
@@ -206,12 +220,13 @@ nav {
   color: #fff;
   border: none;
   padding: 7px 16px;
-  border-radius: 12px;
+  border-radius: 8px;
   cursor: pointer;
   font-size: 16px;
   font-weight: 600;
   transition: background-color 0.2s, transform 0.05s;
 }
+
 .btn-delete,
 .btn-edit,
 .btn-save,
@@ -250,11 +265,13 @@ nav {
   background-color: #15803d;
 }
 
-.btn, .btn-cancel {
+.btn,
+.btn-cancel {
   background-color: #64748b;
 }
 
-.btn:hover, .btn-cancel:hover {
+.btn:hover,
+.btn-cancel:hover {
   background-color: #475569;
 }
 
@@ -277,6 +294,8 @@ nav {
   outline: none;
   box-sizing: border-box;
   transition: border-color 0.2s, box-shadow 0.2s;
+  resize: none;
+  font-family: inherit;
 }
 
 .input-inline:focus {

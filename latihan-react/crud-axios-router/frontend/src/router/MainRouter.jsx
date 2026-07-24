@@ -1,9 +1,13 @@
 import { Routes, Route, Link, BrowserRouter } from "react-router"
 
-import CrudAxios from '../pages/crud-axios'
 import Home from '../pages/home'
-import TableCategory from "../pages/category/table-category"
-import FormCategory from '../pages/category/form-category'
+
+import TableCrudAxios from "../pages/crud-axios/table"
+import FormCrudAxios from "../pages/crud-axios/form"
+
+import TableCategory from "../pages/category/table"
+import FormCategory from '../pages/category/form'
+
 
 import MainLayout from '../layout/MainLayout'
 import NoMatchLayout from '../layout/NoMatchLayout'
@@ -17,7 +21,8 @@ const MainRouter = () => {
                         <Route index element={<Home />} />
                         <Route path="category" element={<TableCategory />} />
                         <Route path="category/create" element={<FormCategory />} />
-                        <Route path="crud-axios" element={<CrudAxios />} />
+                        <Route path="crud-axios" element={<TableCrudAxios />} />
+                        <Route path="crud-axios/create" element={<FormCrudAxios />} />
                         <Route path="*" element={<NoMatchLayout />} />
                     </Route>
                 </Routes>

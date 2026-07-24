@@ -1,46 +1,38 @@
 import { useEffect, useState } from 'react'
 import axios from 'axios'
-import baseUrl from '../config/utils'
+import { useNavigate } from 'react-router';
 
 const BASE_URL = import.meta.env.VITE_BASE_URL;
 
-const CrudAxios = () => {
+const TableCategory = () => {
     const [data, setData] = useState([])
-    const [input, setInput] = useState()
     const [editId, setEditId] = useState(null)
-    const [editInput, setEditInput] = useState({ title: '', year: '' })
+    const [editInput, setEditInput] = useState({ name: '', description: '' })
+
+    let navigate = useNavigate()
 
     const fetchData = async () => {
         try {
-            let res = await axios.get(`${BASE_URL}/movie/api/get`)
+            let res = await axios.get(`${BASE_URL}/category/api/get`)
             setData(res.data.items)
         } catch(err) {
             console.error(err);
         }
     }
-    const createMovie = async (event) => {
-        event.preventDefault();
+    const deleteCategory = async (id) => {
         try {
-            await axios.post(`${BASE_URL}/movie/api/post`, input);
-            fetchData()
-        } catch (err) {
-            console.error(err)
-        }
-    }
-    const deleteMovie = async (id) => {
-        try {
-            await axios.post(`${BASE_URL}/movie/api/delete`, { id })
+            await axios.post(`${BASE_URL}/category/api/delete`, { id })
             fetchData()
         } catch(err) {
             console.error(err)
         } 
     }
-    const updateMovie = async (id) => {
+    const updateCategory = async (id) => {
         try {
-            await axios.post(`${BASE_URL}/movie/api/update`, {
+            await axios.post(`${BASE_URL}/category/api/update`, {
                 id,
-                title: editInput.title,
-                year: editInput.year,
+                name: editInput.name,
+                description: editInput.description
             })
             cancelEdit()
             fetchData()
@@ -51,20 +43,18 @@ const CrudAxios = () => {
 
     const startEdit = (item) => {
         setEditId(item.id)
-        setEditInput({ title: item.title, year: item.year })
+        setEditInput({ name: item.category_name, description: item.category_desc })
     }
     const cancelEdit = () => {
         setEditId(null)
-        setEditInput({ title: '', year: '' })
+        setEditInput({ name: '', description: '' })
     }
     const handleEditChange = (event) => {
         let { name, value } = event.target;
         setEditInput({ ...editInput, [name]: value })
     }
-
-    const handleChange = (event) => {
-        let {name, value} = event.target;
-        setInput({...input, [name]: value});
+    const handleCreateClick = () => {
+        navigate('create')
     }
 
     useEffect(() => {
@@ -73,33 +63,23 @@ const CrudAxios = () => {
 
     return (
         <div className="crud-container">
-            <h1 className="crud-title">CRUD AXIOS</h1>
-            <p className="crud-subtitle">Kelola daftar film favoritmu</p>
-            <div className="div-form">
-                <form onSubmit={createMovie}>
-                    <label htmlFor="title">Judul</label>
-                    <input type="text" onChange={handleChange} id="title" name="title" placeholder="Masukkan judul film" required />
-
-                    <label htmlFor="year">Tahun rilis</label>
-                    <input type="number" onChange={handleChange} id="year" name="year" placeholder="Masukkan tahun rilis" required />
-
-                    <input type="submit" value="Kirim" />
-                </form>
-            </div>
+            <h1 className="crud-title">Kategori</h1>
+            <p className="crud-subtitle">Temukan film menurut kategori</p>
+            <button onClick={handleCreateClick} className="btn" style={{ marginBottom: '16px' }}>Buat kategori</button>
             <div className="div-table">
                 <table>
                     <thead>
                         <tr>
                             <th>No.</th>
-                            <th>Judul</th>
-                            <th>Tahun rilis</th>
+                            <th>Kategori</th>
+                            <th>Deskripsi</th>
                             <th>Aksi</th>
                         </tr>
                     </thead>
                     <tbody>
                         {data.length === 0 ? (
                             <tr className="empty-row">
-                                <td colSpan={4}>Belum ada data film</td>
+                                <td colSpan={4}>Belum ada data kategori</td>
                             </tr>
                         ) : (
                             data.map((item, index) => {
@@ -112,38 +92,40 @@ const CrudAxios = () => {
                                                 <input
                                                     className="input-inline"
                                                     type="text"
-                                                    name="title"
-                                                    value={editInput.title}
+                                                    maxLength={100  }
+                                                    name="name"
+                                                    value={editInput.name}
                                                     onChange={handleEditChange}
                                                 />
                                             ) : (
-                                                item.title
+                                                item.category_name
                                             )}
                                         </td>
                                         <td>
                                             {isEditing ? (
-                                                <input
+                                                <textarea
                                                     className="input-inline"
-                                                    type="number"
-                                                    name="year"
-                                                    value={editInput.year}
+                                                    type="text"
+                                                    name="description"
+                                                    value={editInput.description}
                                                     onChange={handleEditChange}
-                                                />
+                                                    style={{ height: '96px'}}
+                                                ></textarea>
                                             ) : (
-                                                item.year
+                                                item.category_desc
                                             )}
                                         </td>
                                         <td>
                                             <div className="action-group">
                                                 {isEditing ? (
                                                     <>
-                                                        <button className="btn-save" onClick={() => updateMovie(item.id)}>Simpan</button>
+                                                        <button className="btn-save" onClick={() => updateCategory(item.id)}>Simpan</button>
                                                         <button className="btn-cancel" onClick={cancelEdit}>Batal</button>
                                                     </>
                                                 ) : (
                                                     <>
                                                         <button className="btn-edit" onClick={() => startEdit(item)}>Edit</button>
-                                                        <button className="btn-delete" onClick={() => deleteMovie(item.id)}>Hapus</button>
+                                                        <button className="btn-delete" onClick={() => deleteCategory(item.id)}>Hapus</button>
                                                     </>
                                                 )}
                                             </div>
@@ -159,4 +141,4 @@ const CrudAxios = () => {
     )
 }
 
-export default CrudAxios
+export default TableCategory
