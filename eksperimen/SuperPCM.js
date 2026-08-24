@@ -5926,7 +5926,7 @@
             }
       
             if (data.type === "config") {
-              if (data.playbackRate != null) this.playbackRate = Math.max(0, Number(data.playbackRate) || 0);
+              if (data.playbackRate != null) this.playbackRate = Number(data.playbackRate) || 0;
               if (data.volume != null) this.volume = Math.max(0, Number(data.volume) || 0);
               if (data.muted != null) this.muted = !!data.muted;
               if (data.loop != null) this.loop = !!data.loop;
@@ -6160,7 +6160,7 @@
         } catch (e) {};
         return;
       }
-      var node = new AudioWorkletNode(ctx, 'superpcm-streaming-pcm', {
+      var node = new AudioWorkletNode(ctx, "superpcm-streaming-pcm", {
         numberOfInputs: 0,
         numberOfOutputs: 1,
         outputChannelCount: [cfg.channels],
@@ -6319,6 +6319,10 @@
     };
     _self.resetOffset = function() {
       pcmOffset = playbackRate >= 0 ? 0 : Math.max(0, length - 1);
+      if (_self.workletNode) _self.workletNode.port.postMessage({
+        type: 'seek',
+        position: pcmOffset
+      });
     };
     _self.setCurrentTime = function(time) {
       timeUpdate = Date.now();
